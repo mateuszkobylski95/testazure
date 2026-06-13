@@ -15,6 +15,12 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
     defaults:
       run:
         working-directory: terraform
@@ -35,8 +41,7 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      - name: Terraform Apply
+      - name: Terraform Plan
         run: |
-          terraform apply \
-            -auto-approve \
+            terraform plan \
             -var="resource_group_name=${{ github.event.inputs.resource_group_name }}"
