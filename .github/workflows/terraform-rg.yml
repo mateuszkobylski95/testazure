@@ -7,6 +7,10 @@ on:
         description: Resource Group Name
         required: true
 
+      vm_name:
+        description: VM Name
+        required: true
+
 permissions:
   id-token: write
   contents: read
@@ -44,5 +48,7 @@ jobs:
       - name: Terraform Apply
         run: |
             terraform apply \
-                -auto-approve \
-                -var="resource_group_name=${{ github.event.inputs.resource_group_name }}"
+            -auto-approve \
+            -var="resource_group_name=${{ github.event.inputs.resource_group_name }}" \
+            -var="vm_name=${{ github.event.inputs.vm_name }}" \
+            -var="ssh_public_key=${{ vars.SSH_PUBLIC_KEY }}"
