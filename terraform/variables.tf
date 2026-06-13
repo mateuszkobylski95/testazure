@@ -8,6 +8,7 @@ variable "location" {
 }
 variable "vm_name" {
   type = string
+  default = null
 }
 
 variable "vm_size" {
@@ -16,8 +17,9 @@ variable "vm_size" {
 }
 variable "ssh_public_key" {
   type = string
+  default = null
 }
-variable "create_vm" {
+variable "save_rg" {
   type    = bool
   default = true
 }
