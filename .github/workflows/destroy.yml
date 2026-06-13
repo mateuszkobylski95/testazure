@@ -1,0 +1,57 @@
+name: Destroy Resources
+
+on:
+  workflow_dispatch:
+    inputs:
+      destroy_mode:
+        description: "VM lub RG"
+        required: true
+        default: "vm"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Destroy VM
+        if: github.event.inputs.destroy_mode == 'vm'
+        run: |
+          terraform apply \
+            -auto-approve \
+            -var="create_vm=false"
+
+      - name: Destroy Environment
+        if: github.event.inputs.destroy_mode == 'environment'
+        run: |
+          terraform destroy \
+            -auto-approve \
+            -var="create_vm=false"
