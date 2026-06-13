@@ -6,7 +6,9 @@ on:
       destroy_mode:
         description: "VM lub RG"
         required: true
-        default: "vm"
+        options:
+        - vm
+        - environment
 
 permissions:
   id-token: write
@@ -43,14 +45,14 @@ jobs:
         run: terraform init
 
       - name: Destroy VM
-        if: github.event.inputs.destroy_mode == 'vm'
+        if: github.event.inputs.destroy_mode == 'VM'
         run: |
           terraform apply \
             -auto-approve \
             -var="create_vm=false"
 
       - name: Destroy Environment
-        if: github.event.inputs.destroy_mode == 'environment'
+        if: github.event.inputs.destroy_mode == 'RG'
         run: |
           terraform destroy \
             -auto-approve \
