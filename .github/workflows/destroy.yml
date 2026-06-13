@@ -3,12 +3,15 @@ name: Destroy Resources
 on:
   workflow_dispatch:
     inputs:
+      resource_group_name:
+        description: Resource Group Name
+        required: true
       destroy_mode:
         description: "VM lub RG"
         required: true
         options:
-        - VM
-        - RG
+            - VM
+            - RG
 
 permissions:
   id-token: write
@@ -48,12 +51,14 @@ jobs:
         if: github.event.inputs.destroy_mode == 'VM'
         run: |
           terraform apply \
+            -var="resource_group_name=${{ github.event.inputs.resource_group_name }}"
             -auto-approve \
-            -var="save_rg=true"
+            -var="create_vm=false"
 
       - name: Destroy Environment
         if: github.event.inputs.destroy_mode == 'RG'
         run: |
           terraform destroy \
             -auto-approve \
-            -var="save_rg=false"
+            -var="resource_group_name=${{ github.event.inputs.resource_group_name }}"
+            -var="create_vm=true"

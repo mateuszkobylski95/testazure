@@ -19,7 +19,7 @@ variable "ssh_public_key" {
   type = string
   default = null
 }
-variable "save_rg" {
+variable "create_vm" {
   type    = bool
   default = true
 }
