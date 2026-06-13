@@ -17,3 +17,7 @@ variable "vm_size" {
 variable "ssh_public_key" {
   type = string
 }
+variable "create_vm" {
+  type    = bool
+  default = true
+}
