@@ -46,5 +46,5 @@ jobs:
           terraform destroy \
             -auto-approve \
             -var="vm_name=destroy" \
-            -var="ssh_public_key=ssh-rsa destroy"\
+            -var="ssh_public_key=ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCfakeDestroyKey"\
             -var="resource_group_name=${{ github.event.inputs.resource_group_name }}"
