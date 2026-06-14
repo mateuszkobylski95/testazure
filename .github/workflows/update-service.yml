@@ -88,6 +88,15 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
+      - name: Ensure azureuser docker access
+        env:
+          VM_IP: ${{ steps.tf.outputs.public_ip }}
+          SSH_USER: azureuser
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} \
+          "id -nG azureuser | grep -qw docker || sudo usermod -aG docker azureuser"
+
       - name: Validate service name
         run: |
           python3 - <<'EOF'

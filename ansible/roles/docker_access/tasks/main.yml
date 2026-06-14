@@ -1,0 +1,6 @@
+---
+- name: Add azureuser to docker group
+  user:
+    name: azureuser
+    groups: docker
+    append: true

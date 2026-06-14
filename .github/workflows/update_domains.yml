@@ -57,6 +57,15 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
+      - name: Ensure azureuser docker access
+        env:
+          VM_IP: ${{ steps.tf.outputs.public_ip }}
+          SSH_USER: azureuser
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} \
+          "id -nG azureuser | grep -qw docker || sudo usermod -aG docker azureuser"
+
       - name: Resolve WG domain
         run: |
           INPUT="${{ github.event.inputs.wg_domain }}"
@@ -75,9 +84,21 @@ jobs:
         run: |
           if [ -z "${{ github.event.inputs.kuma_domain }}" ]; then
             echo "DEPLOYMENT_MODE=single" >> $GITHUB_ENV
+            echo "SINGLE_DOMAIN_MODE=true" >> $GITHUB_ENV
           else
             echo "DEPLOYMENT_MODE=dual" >> $GITHUB_ENV
+            echo "SINGLE_DOMAIN_MODE=false" >> $GITHUB_ENV
           fi
+
+      - name: Update Terraform NSG for deployment mode
+        working-directory: terraform
+        run: |
+          terraform apply \
+            -auto-approve \
+            -var="resource_group_name=$(terraform output -raw resource_group_name)" \
+            -var="vm_name=$(terraform output -raw vm_name)" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="single_domain_mode=${{ env.SINGLE_DOMAIN_MODE }}"
 
       - name: Validate domains
         env:

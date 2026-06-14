@@ -36,8 +36,6 @@
     enabled: true
     state: started
 
-- name: Add azureuser to docker group
-  user:
-    name: azureuser
-    groups: docker
-    append: true
+- name: Ensure azureuser can use Docker without sudo
+  import_role:
+    name: docker_access
