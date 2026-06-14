@@ -73,21 +73,16 @@
     src: nginx-single-domain.conf.j2
     dest: "/opt/{{ bootstrap_config.REPO_NAME }}/nginx/nginx.conf"
     mode: "0644"
-  when:
-    - need_service_certificates
-    - bootstrap_config.DEPLOYMENT_MODE == "single"
+  when: bootstrap_config.DEPLOYMENT_MODE == "single"
 
 - name: Generate final nginx config for dual deployment
   template:
     src: nginx-dual-domain.conf.j2
     dest: "/opt/{{ bootstrap_config.REPO_NAME }}/nginx/nginx.conf"
     mode: "0644"
-  when:
-    - need_service_certificates
-    - bootstrap_config.DEPLOYMENT_MODE == "dual"
+  when: bootstrap_config.DEPLOYMENT_MODE == "dual"
 
-- name: Restart nginx after service certificate generation
+- name: Restart nginx after service configuration update
   shell: docker compose up -d --force-recreate nginx
   args:
     chdir: "/opt/{{ bootstrap_config.REPO_NAME }}"
-  when: need_service_certificates

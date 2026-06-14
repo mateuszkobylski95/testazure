@@ -99,6 +99,39 @@ http {
             proxy_set_header X-Forwarded-Proto https;
         }
     }
+    {% for service in vpn_services %}
+    {% if not service.has_domain %}
+
+        server {
+
+            listen {{ service.public_port }} ssl;
+
+            server_name {{ bootstrap_config.WG_DOMAIN }};
+
+            if ($host != "{{ bootstrap_config.WG_DOMAIN }}") {
+                return 444;
+            }
+
+            ssl_certificate /etc/letsencrypt/live/{{ bootstrap_config.WG_DOMAIN }}/fullchain.pem;
+            ssl_certificate_key /etc/letsencrypt/live/{{ bootstrap_config.WG_DOMAIN }}/privkey.pem;
+
+            {% if service.basic_auth %}
+            auth_basic "Restricted";
+            auth_basic_user_file /etc/nginx/.htpasswd;
+            {% endif %}
+
+            location {{ service.path }} {
+
+                proxy_pass http://{{ service.vpn_ip }}:{{ service.local_port }};
+
+                proxy_set_header Host $host;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto https;
+            }
+        }
+
+    {% endif %}
+    {% endfor %}
     {% for service in domain_services %}
 
     server {

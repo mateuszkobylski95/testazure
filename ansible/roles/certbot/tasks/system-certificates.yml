@@ -93,14 +93,8 @@
     mode: "0644"
   when: bootstrap_config.DEPLOYMENT_MODE == "dual"
 
-- name: Restart nginx after certificate generation
+- name: Restart nginx after nginx config update
   shell: docker compose up -d --force-recreate nginx
   args:
     chdir: "/opt/{{ bootstrap_config.REPO_NAME }}"
-  when: >
-    not wg_cert.stat.exists or
-    (
-      bootstrap_config.DEPLOYMENT_MODE == "dual"
-      and not kuma_cert.stat.exists
-    )
 

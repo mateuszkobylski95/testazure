@@ -4,6 +4,7 @@
 
   roles:
     - load_config
+    - docker_access
     - load_services
     - domain_validation
     - deploy

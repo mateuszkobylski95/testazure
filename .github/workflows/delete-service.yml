@@ -208,6 +208,6 @@ jobs:
 
           ansible-playbook \
             -i inventory.ini \
-            update-domains.yml
+            update-service.yml
 
           EOF
