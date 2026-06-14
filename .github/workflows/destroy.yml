@@ -47,4 +47,4 @@ jobs:
             -auto-approve \
             -var="resource_group_name=${{ github.event.inputs.resource_group_name }}"
             -var="vm_name=destroy" \
-            -var="ssh_public_key=${{ vars.SSH_PUBLIC_KEY }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
