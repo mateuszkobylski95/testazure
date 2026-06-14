@@ -72,6 +72,24 @@ resource "azurerm_network_security_rule" "https" {
   resource_group_name         = azurerm_resource_group.this.name
   network_security_group_name = azurerm_network_security_group.this.name
 }
+resource "azurerm_network_security_rule" "single_domain_port" {
+  count = var.single_domain_mode ? 1 : 0
+
+  name                        = "allow-single-domain-port"
+  priority                    = 125
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+
+  source_port_range           = "*"
+  destination_port_range      = "8443"
+
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+
+  resource_group_name         = azurerm_resource_group.this.name
+  network_security_group_name = azurerm_network_security_group.this.name
+}
 resource "azurerm_network_security_rule" "wireguard" {
   name                        = "allow-wireguard"
   priority                    = 130
@@ -92,3 +110,4 @@ resource "azurerm_subnet_network_security_group_association" "this" {
   subnet_id                 = azurerm_subnet.this.id
   network_security_group_id = azurerm_network_security_group.this.id
 }
+

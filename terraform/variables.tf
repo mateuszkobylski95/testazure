@@ -19,3 +19,7 @@ variable "ssh_public_key" {
   type = string
   default = ""
 }
+variable "single_domain_mode" {
+  type    = bool
+  default = false
+}
