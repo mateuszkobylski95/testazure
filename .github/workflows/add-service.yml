@@ -1,0 +1,521 @@
+name: Add Service
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      service_name:
+        description: "Service name"
+        required: true
+
+      vpn_ip:
+        description: "VPN client IP"
+        required: true
+
+      path:
+        description: "Proxy path"
+        required: true
+        default: "/"
+
+      local_port:
+        description: "Local service port"
+        required: true
+        default: "80"
+
+      has_domain:
+        description: "Use domain"
+        required: true
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+      domain:
+        description: "Domain"
+        required: false
+
+      public_port:
+        description: "Public port"
+        required: false
+
+      basic_auth:
+        description: "Enable basic auth"
+        required: true
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  add-service:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Validate service name
+        run: |
+          python3 - <<'EOF'
+          import re
+
+          name = "${{ github.event.inputs.service_name }}"
+
+          if not re.fullmatch(
+              r"[a-z0-9-]+",
+              name
+          ):
+              raise SystemExit(
+                  "Service name may contain only lowercase letters, numbers and hyphens"
+              )
+
+          print("Service name validation OK")
+          EOF
+      - name: Validate VPN IP
+        run: |
+            python3 - <<'EOF'
+            import ipaddress
+
+            vpn_ip = "${{ github.event.inputs.vpn_ip }}"
+
+            try:
+                ip = ipaddress.ip_address(vpn_ip)
+            except ValueError:
+                raise SystemExit(
+                    f"Invalid IP address: {vpn_ip}"
+                )
+
+            vpn_network = ipaddress.ip_network(
+                "10.8.0.0/24"
+            )
+
+            if ip not in vpn_network:
+                raise SystemExit(
+                    f"{vpn_ip} is outside VPN network"
+                )
+
+            if str(ip) == "10.8.0.1":
+                raise SystemExit(
+                    "10.8.0.1 is reserved for WG-Easy"
+                )
+
+            print("VPN IP validation OK")
+            EOF
+      - name: Validate service configuration
+        run: |
+            python3 - <<'EOF'
+
+            has_domain = "${{ github.event.inputs.has_domain }}".lower() == "true"
+
+            domain = "${{ github.event.inputs.domain }}".strip()
+
+            public_port = "${{ github.event.inputs.public_port }}".strip()
+
+            if has_domain:
+
+                if not domain:
+                    raise SystemExit(
+                        "Domain is required when has_domain=true"
+                    )
+
+                if public_port:
+                    raise SystemExit(
+                        "public_port must be empty when has_domain=true"
+                    )
+
+            else:
+
+                if not public_port:
+                    raise SystemExit(
+                        "public_port is required when has_domain=false"
+                    )
+
+                if domain:
+                    raise SystemExit(
+                        "domain must be empty when has_domain=false"
+                    )
+
+            print("Service configuration validation OK")
+
+            EOF
+      - name: Validate ports and path
+        run: |
+            python3 - <<'EOF'
+
+            import re
+
+            path = "${{ github.event.inputs.path }}".strip()
+
+            local_port = int(
+                "${{ github.event.inputs.local_port }}"
+            )
+
+            has_domain = "${{ github.event.inputs.has_domain }}".lower() == "true"
+
+            public_port_raw = "${{ github.event.inputs.public_port }}".strip()
+
+            if not re.fullmatch(
+                r"/([A-Za-z0-9._-]+/)*[A-Za-z0-9._-]*/?",
+                path
+            ):
+                raise SystemExit(
+                    "Invalid path format"
+                )
+
+            if not (1 <= local_port <= 65535):
+                raise SystemExit(
+                    "Invalid local_port"
+                )
+
+            if not has_domain:
+
+                try:
+                    public_port = int(public_port_raw)
+                except ValueError:
+                    raise SystemExit(
+                        "Invalid public_port"
+                    )
+
+                if not (1 <= public_port <= 65535):
+                    raise SystemExit(
+                        "Invalid public_port"
+                    )
+
+            print("Port and path validation OK")
+
+            EOF
+
+      - name: Validate domain format
+        if: github.event.inputs.has_domain == 'true'
+        run: |
+            python3 - <<'EOF'
+
+            import re
+
+            domain = "${{ github.event.inputs.domain }}"
+
+            pattern = re.compile(
+                r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$"
+            )
+
+            if not pattern.match(domain):
+                raise SystemExit(
+                    f"Invalid domain: {domain}"
+                )
+
+            print("Domain validation OK")
+
+            EOF
+      - name: Setup SSH key
+        run: |
+            mkdir -p ~/.ssh
+            echo "${{ secrets.SSH_PRIVATEKEY }}" > ~/.ssh/id_rsa
+            chmod 600 ~/.ssh/id_rsa
+
+      - name: Check if service already exists
+        env:
+            VM_IP: ${{ secrets.VM_IP }}
+            SSH_USER: ${{ secrets.SSH_USER }}
+            SERVICE_NAME: ${{ github.event.inputs.service_name }}
+
+        run: |
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} <<EOF
+
+            set -e
+
+            BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+            if [ -z "\$BOOTSTRAP_FILE" ]; then
+            echo ".bootstrap.env not found"
+            exit 1
+            fi
+
+            REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
+
+            if [ -f "\$REPO_DIR/services/${SERVICE_NAME}.yml" ]; then
+            echo "Service already exists"
+            exit 1
+            fi
+
+            echo "Service name is available"
+
+            EOF
+
+      - name: Check domain availability
+        if: github.event.inputs.has_domain == 'true'
+        env:
+            VM_IP: ${{ secrets.VM_IP }}
+            SSH_USER: ${{ secrets.SSH_USER }}
+            DOMAIN: ${{ github.event.inputs.domain }}
+
+        run: |
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} <<EOF
+
+
+            set -e
+
+            DOMAIN="${DOMAIN}"
+
+            BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+            if [ -z "\$BOOTSTRAP_FILE" ]; then
+            echo ".bootstrap.env not found"
+            exit 1
+            fi
+
+            source "\$BOOTSTRAP_FILE"
+
+            if [ "\$DOMAIN" = "\$WG_DOMAIN" ]; then
+            echo "Domain reserved by WG-Easy"
+            exit 1
+            fi
+
+            if [ -n "\$KUMA_DOMAIN" ] && [ "\$DOMAIN" = "\$KUMA_DOMAIN" ]; then
+            echo "Domain reserved by Uptime Kuma"
+            exit 1
+            fi
+
+            SERVICES_DIR=\$(dirname "\$BOOTSTRAP_FILE")/services
+
+            if [ -d "\$SERVICES_DIR" ]; then
+
+            if grep -R "^domain: \$DOMAIN\$" "\$SERVICES_DIR" >/dev/null 2>&1; then
+                echo "Domain already exists"
+                exit 1
+            fi
+
+            fi
+
+            echo "Domain is available"
+
+            EOF
+
+      - name: Validate domain DNS
+        if: github.event.inputs.has_domain == 'true'
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DOMAIN: ${{ github.event.inputs.domain }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          DOMAIN="${DOMAIN}"
+
+          SERVER_IP=\$(curl -4 -s ifconfig.me)
+          DOMAIN_IP=\$(dig +short "\$DOMAIN" | head -n1)
+
+          if [ -z "\$DOMAIN_IP" ]; then
+            echo "Domain does not resolve"
+            exit 1
+          fi
+
+          if [ "\$DOMAIN_IP" != "\$SERVER_IP" ]; then
+            echo "Domain resolves to \$DOMAIN_IP but server IP is \$SERVER_IP"
+            exit 1
+          fi
+
+          echo "Domain DNS validation OK"
+
+          EOF
+
+      - name: Check public port availability
+        if: github.event.inputs.has_domain == 'false'
+        env:
+            VM_IP: ${{ secrets.VM_IP }}
+            SSH_USER: ${{ secrets.SSH_USER }}
+            PUBLIC_PORT: ${{ github.event.inputs.public_port }}
+
+        run: |
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} <<EOF
+
+            set -e
+
+            PUBLIC_PORT="${PUBLIC_PORT}"
+
+            BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+            if [ -z "\$BOOTSTRAP_FILE" ]; then
+            echo ".bootstrap.env not found"
+            exit 1
+            fi
+
+            SERVICES_DIR=\$(dirname "\$BOOTSTRAP_FILE")/services
+
+            if [ -d "\$SERVICES_DIR" ]; then
+
+            if grep -R "^public_port: \$PUBLIC_PORT\$" "\$SERVICES_DIR" >/dev/null 2>&1; then
+                echo "Public port already exists"
+                exit 1
+            fi
+
+            fi
+
+            case "\$PUBLIC_PORT" in
+            80|443|8443|51820)
+                echo "Reserved port"
+                exit 1
+                ;;
+            esac
+
+            echo "Public port is available"
+
+            EOF
+
+      - name: Check backend availability
+        env:
+            VM_IP: ${{ secrets.VM_IP }}
+            SSH_USER: ${{ secrets.SSH_USER }}
+
+            VPN_IP: ${{ github.event.inputs.vpn_ip }}
+            LOCAL_PORT: ${{ github.event.inputs.local_port }}
+            PATH_VALUE: ${{ github.event.inputs.path }}
+
+        run: |
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} <<EOF
+
+            set -e
+
+            VPN_IP="${VPN_IP}"
+            LOCAL_PORT="${LOCAL_PORT}"
+            PATH_VALUE="${PATH_VALUE}"
+
+            BOOTSTRAP_FILE=\$(sudo find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+            if [ -z "\$BOOTSTRAP_FILE" ]; then
+            echo ".bootstrap.env not found"
+            exit 1
+            fi
+
+            SERVICES_DIR=\$(dirname "\$BOOTSTRAP_FILE")/services
+
+            for file in "\$SERVICES_DIR"/*.yml; do
+
+            [ -f "\$file" ] || continue
+
+            FILE_VPN_IP=\$(grep '^vpn_ip:' "\$file" | awk '{print \$2}')
+            FILE_LOCAL_PORT=\$(grep '^local_port:' "\$file" | awk '{print \$2}')
+            FILE_PATH=\$(grep '^path:' "\$file" | awk '{print \$2}')
+
+            if [ "\$FILE_VPN_IP" = "\$VPN_IP" ] \
+                && [ "\$FILE_LOCAL_PORT" = "\$LOCAL_PORT" ] \
+                && [ "\$FILE_PATH" = "\$PATH_VALUE" ]; then
+
+                echo "Backend already exists in \$(basename "\$file")"
+                exit 1
+
+            fi
+
+            done
+
+            echo "Backend is available"
+
+            EOF
+
+      - name: Create service definition
+        env:
+            VM_IP: ${{ secrets.VM_IP }}
+            SSH_USER: ${{ secrets.SSH_USER }}
+
+            SERVICE_NAME: ${{ github.event.inputs.service_name }}
+            VPN_IP: ${{ github.event.inputs.vpn_ip }}
+            PATH_VALUE: ${{ github.event.inputs.path }}
+            LOCAL_PORT: ${{ github.event.inputs.local_port }}
+
+            HAS_DOMAIN: ${{ github.event.inputs.has_domain }}
+            DOMAIN: ${{ github.event.inputs.domain }}
+
+            PUBLIC_PORT: ${{ github.event.inputs.public_port }}
+
+            BASIC_AUTH: ${{ github.event.inputs.basic_auth }}
+
+        run: |
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} <<EOF
+
+            set -e
+
+            SERVICE_NAME="${SERVICE_NAME}"
+            VPN_IP="${VPN_IP}"
+            PATH_VALUE="${PATH_VALUE}"
+            LOCAL_PORT="${LOCAL_PORT}"
+
+            HAS_DOMAIN="${HAS_DOMAIN}"
+            DOMAIN="${DOMAIN}"
+
+            PUBLIC_PORT="${PUBLIC_PORT}"
+
+            BASIC_AUTH="${BASIC_AUTH}"
+
+            BOOTSTRAP_FILE=\$(sudo find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+            if [ -z "\$BOOTSTRAP_FILE" ]; then
+            echo ".bootstrap.env not found"
+            exit 1
+            fi
+
+            REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
+
+            mkdir -p "\$REPO_DIR/services"
+
+            cat > "\$REPO_DIR/services/\${SERVICE_NAME}.yml" <<SERVICE
+
+            name: ${SERVICE_NAME}
+
+            vpn_ip: ${VPN_IP}
+
+            path: ${PATH_VALUE}
+
+            local_port: ${LOCAL_PORT}
+
+            has_domain: ${HAS_DOMAIN}
+
+            domain: "${DOMAIN}"
+
+            public_port: ${PUBLIC_PORT:-null}
+
+            basic_auth: ${BASIC_AUTH}
+
+            SERVICE
+
+
+            echo "Service definition created"
+
+            cat "\$REPO_DIR/services/\${SERVICE_NAME}.yml"
+
+            EOF
+
+      - name: Deploy service
+        env:
+            VM_IP: ${{ secrets.VM_IP }}
+            SSH_USER: ${{ secrets.SSH_USER }}
+
+        run: |
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} <<EOF
+
+            set -e
+
+            BOOTSTRAP_FILE=\$(sudo find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+            if [ -z "\$BOOTSTRAP_FILE" ]; then
+            echo ".bootstrap.env not found"
+            exit 1
+            fi
+
+            REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
+
+            cd "\$REPO_DIR/ansible"
+
+            ansible-playbook \
+            -i inventory.ini \
+            add-service.yml
+
+            echo "Service deployed"
+
+            EOF

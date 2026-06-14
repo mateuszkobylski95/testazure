@@ -1,0 +1,434 @@
+name: Update Service
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      service_name:
+        description: "Existing service name"
+        required: true
+
+      vpn_ip:
+        description: "VPN IP"
+        required: true
+
+      path:
+        description: "Proxy path"
+        required: true
+        default: "/"
+
+      local_port:
+        description: "Local port"
+        required: true
+
+      has_domain:
+        description: "Use domain"
+        required: true
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+      domain:
+        description: "Domain"
+        required: false
+
+      public_port:
+        description: "Public port"
+        required: false
+
+      basic_auth:
+        description: "Enable basic auth"
+        required: true
+        type: choice
+        options:
+          - "true"
+          - "false"
+jobs:
+  update-service:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATEKEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Validate service name
+        run: |
+          python3 - <<'EOF'
+          import re
+
+          name = "${{ github.event.inputs.service_name }}"
+
+          if not re.fullmatch(
+              r"[a-z0-9-]+",
+              name
+          ):
+              raise SystemExit(
+                  "Service name may contain only lowercase letters, numbers and hyphens"
+              )
+
+          print("Service name validation OK")
+          EOF
+
+      - name: Check service exists
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+          SERVICE_NAME: ${{ github.event.inputs.service_name }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          if [ ! -f "/opt/${REPO_NAME}/services/${SERVICE_NAME}.yml" ]; then
+            echo "Service does not exist"
+            exit 1
+          fi
+
+          echo "Service exists"
+
+          EOF
+
+      - name: Read current service data
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+          SERVICE_NAME: ${{ github.event.inputs.service_name }}
+
+        run: |
+
+          OLD_DOMAIN=$(
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} \
+            "grep '^domain:' /opt/${REPO_NAME}/services/${SERVICE_NAME}.yml | cut -d'\"' -f2"
+          )
+
+          OLD_HAS_DOMAIN=$(
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} \
+            "grep '^has_domain:' /opt/${REPO_NAME}/services/${SERVICE_NAME}.yml | awk '{print \$2}'"
+          )
+
+          echo "OLD_DOMAIN=${OLD_DOMAIN}" >> $GITHUB_ENV
+          echo "OLD_HAS_DOMAIN=${OLD_HAS_DOMAIN}" >> $GITHUB_ENV
+
+          echo "Old domain: ${OLD_DOMAIN}"
+          echo "Old has_domain: ${OLD_HAS_DOMAIN}"
+
+      - name: Validate domain DNS
+        if: github.event.inputs.has_domain == 'true'
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DOMAIN: ${{ github.event.inputs.domain }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          DOMAIN="${DOMAIN}"
+
+          SERVER_IP=\$(curl -4 -s ifconfig.me)
+          DOMAIN_IP=\$(dig +short "\$DOMAIN" | head -n1)
+
+          if [ -z "\$DOMAIN_IP" ]; then
+            echo "Domain does not resolve"
+            exit 1
+          fi
+
+          if [ "\$DOMAIN_IP" != "\$SERVER_IP" ]; then
+            echo "Domain resolves to \$DOMAIN_IP but server IP is \$SERVER_IP"
+            exit 1
+          fi
+
+          echo "Domain DNS validation OK"
+
+          EOF
+
+
+      - name: Check domain availability
+        if: github.event.inputs.has_domain == 'true'
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+
+          SERVICE_NAME: ${{ github.event.inputs.service_name }}
+          DOMAIN: ${{ github.event.inputs.domain }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          DOMAIN="${DOMAIN}"
+
+          source /opt/${REPO_NAME}/.bootstrap.env
+
+          if [ "\$DOMAIN" = "\$WG_DOMAIN" ]; then
+            echo "Domain reserved by WG-Easy"
+            exit 1
+          fi
+
+          if [ -n "\$KUMA_DOMAIN" ] && [ "\$DOMAIN" = "\$KUMA_DOMAIN" ]; then
+            echo "Domain reserved by Uptime Kuma"
+            exit 1
+          fi
+
+          for file in /opt/${REPO_NAME}/services/*.yml; do
+
+            [ -f "\$file" ] || continue
+
+            CURRENT_SERVICE=\$(basename "\$file" .yml)
+
+            if [ "\$CURRENT_SERVICE" = "${SERVICE_NAME}" ]; then
+              continue
+            fi
+
+            FILE_DOMAIN=\$(grep '^domain:' "\$file" | cut -d'"' -f2)
+
+            if [ "\$FILE_DOMAIN" = "\$DOMAIN" ]; then
+              echo "Domain already exists"
+              exit 1
+            fi
+
+          done
+
+          echo "Domain is available"
+
+          EOF
+
+      - name: Check public port availability
+        if: github.event.inputs.has_domain == 'false'
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+
+          SERVICE_NAME: ${{ github.event.inputs.service_name }}
+          PUBLIC_PORT: ${{ github.event.inputs.public_port }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          PUBLIC_PORT="${PUBLIC_PORT}"
+
+          for file in /opt/${REPO_NAME}/services/*.yml; do
+
+            [ -f "\$file" ] || continue
+
+            CURRENT_SERVICE=\$(basename "\$file" .yml)
+
+            if [ "\$CURRENT_SERVICE" = "${SERVICE_NAME}" ]; then
+              continue
+            fi
+
+            FILE_PUBLIC_PORT=\$(grep '^public_port:' "\$file" | awk '{print \$2}')
+
+            if [ "\$FILE_PUBLIC_PORT" = "\$PUBLIC_PORT" ]; then
+              echo "Public port already exists"
+              exit 1
+            fi
+
+          done
+
+          case "\$PUBLIC_PORT" in
+            80|443|8443|51820)
+              echo "Reserved port"
+              exit 1
+              ;;
+          esac
+
+          echo "Public port is available"
+
+          EOF
+
+      - name: Check backend availability
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+
+          SERVICE_NAME: ${{ github.event.inputs.service_name }}
+
+          VPN_IP: ${{ github.event.inputs.vpn_ip }}
+          LOCAL_PORT: ${{ github.event.inputs.local_port }}
+          PATH_VALUE: ${{ github.event.inputs.path }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          for file in /opt/${REPO_NAME}/services/*.yml; do
+
+            [ -f "\$file" ] || continue
+
+            CURRENT_SERVICE=\$(basename "\$file" .yml)
+
+            if [ "\$CURRENT_SERVICE" = "${SERVICE_NAME}" ]; then
+              continue
+            fi
+
+            FILE_VPN_IP=\$(grep '^vpn_ip:' "\$file" | awk '{print \$2}')
+            FILE_LOCAL_PORT=\$(grep '^local_port:' "\$file" | awk '{print \$2}')
+            FILE_PATH=\$(grep '^path:' "\$file" | awk '{print \$2}')
+
+            if [ "\$FILE_VPN_IP" = "${VPN_IP}" ] \
+              && [ "\$FILE_LOCAL_PORT" = "${LOCAL_PORT}" ] \
+              && [ "\$FILE_PATH" = "${PATH_VALUE}" ]; then
+
+              echo "Backend already exists in \$CURRENT_SERVICE"
+              exit 1
+
+            fi
+
+          done
+
+          echo "Backend is available"
+
+          EOF
+
+      - name: Detect domain change
+        run: |
+
+          DOMAIN_CHANGED=false
+
+          if [ "${OLD_HAS_DOMAIN}" = "true" ] && \
+             [ "${{ github.event.inputs.has_domain }}" = "true" ] && \
+             [ "${OLD_DOMAIN}" != "${{ github.event.inputs.domain }}" ]; then
+
+            DOMAIN_CHANGED=true
+
+          fi
+
+          if [ "${OLD_HAS_DOMAIN}" = "true" ] && \
+             [ "${{ github.event.inputs.has_domain }}" = "false" ]; then
+
+            DOMAIN_CHANGED=true
+
+          fi
+
+          echo "DOMAIN_CHANGED=${DOMAIN_CHANGED}" >> $GITHUB_ENV
+
+          echo "Domain changed: ${DOMAIN_CHANGED}"
+
+      - name: Delete old certificate
+        if: env.DOMAIN_CHANGED == 'true' && env.OLD_HAS_DOMAIN == 'true'
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+
+          OLD_DOMAIN: ${{ env.OLD_DOMAIN }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          cd /opt/${REPO_NAME}
+
+          docker compose run --rm certbot \
+            delete \
+            --cert-name "${OLD_DOMAIN}" \
+            --non-interactive
+
+          echo "Old certificate deleted"
+
+          EOF
+
+      - name: Update service definition
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+
+          SERVICE_NAME: ${{ github.event.inputs.service_name }}
+
+          VPN_IP: ${{ github.event.inputs.vpn_ip }}
+          PATH_VALUE: ${{ github.event.inputs.path }}
+          LOCAL_PORT: ${{ github.event.inputs.local_port }}
+
+          HAS_DOMAIN: ${{ github.event.inputs.has_domain }}
+          DOMAIN: ${{ github.event.inputs.domain }}
+
+          PUBLIC_PORT: ${{ github.event.inputs.public_port }}
+
+          BASIC_AUTH: ${{ github.event.inputs.basic_auth }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          cat > /opt/${REPO_NAME}/services/${SERVICE_NAME}.yml <<SERVICE
+
+          name: ${SERVICE_NAME}
+
+          vpn_ip: ${VPN_IP}
+
+          path: ${PATH_VALUE}
+
+          local_port: ${LOCAL_PORT}
+
+          has_domain: ${HAS_DOMAIN}
+
+          domain: "${DOMAIN}"
+
+          public_port: ${PUBLIC_PORT:-null}
+
+          basic_auth: ${BASIC_AUTH}
+
+          SERVICE
+
+          echo "Service updated"
+
+          cat /opt/${REPO_NAME}/services/${SERVICE_NAME}.yml
+
+          EOF
+
+      - name: Deploy configuration
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          cd /opt/${REPO_NAME}/ansible
+
+          ansible-playbook \
+            -i inventory.ini \
+            update-service.yml
+
+          EOF

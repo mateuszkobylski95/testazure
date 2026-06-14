@@ -1,0 +1,103 @@
+name: List Services
+
+on:
+  workflow_dispatch:
+
+jobs:
+  list-services:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATEKEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: List services
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+          if [ -z "\$BOOTSTRAP_FILE" ]; then
+            echo ".bootstrap.env not found"
+            exit 1
+          fi
+
+          REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
+
+          echo "Repository: \$REPO_DIR"
+          echo
+
+          export REPO_DIR
+
+          python3 - <<PYTHON
+          import pathlib
+          import yaml
+          import os
+
+          services_dir = pathlib.Path(
+          os.environ["REPO_DIR"]
+          ) / "services"
+          print(f"Services dir: {services_dir}")
+
+          files = sorted(
+              services_dir.glob("*.yml")
+          )
+
+          if not files:
+              print("No services found")
+              raise SystemExit(0)
+
+          print()
+          print("=== SERVICES ===")
+          print()
+
+          for file in files:
+
+              data = yaml.safe_load(
+                  file.read_text()
+              )
+
+              print(
+                  f"Name: {data['name']}"
+              )
+
+              print(
+                  f"VPN IP: {data['vpn_ip']}"
+              )
+
+              if data.get("has_domain"):
+
+                  print(
+                      f"Domain: {data['domain']}"
+                  )
+
+              else:
+
+                  print(
+                      f"Public Port: {data['public_port']}"
+                  )
+
+              print(
+                  f"Path: {data['path']}"
+              )
+
+              print(
+                  f"Basic Auth: {data['basic_auth']}"
+              )
+
+              print("-" * 40)
+
+          PYTHON
+
+          EOF

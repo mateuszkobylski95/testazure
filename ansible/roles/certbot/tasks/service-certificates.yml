@@ -1,0 +1,93 @@
+---
+- name: Check service certificates
+  stat:
+    path: "/opt/{{ bootstrap_config.REPO_NAME }}/certbot/conf/live/{{ item }}/fullchain.pem"
+  loop: "{{ service_domains }}"
+  register: service_certs
+
+- name: Show service certificates
+  debug:
+    var: service_certs
+
+- name: Check if any service certificate is missing
+  set_fact:
+    missing_service_certificates: >-
+      {{
+        service_certs.results
+        | selectattr('stat.exists', 'equalto', false)
+        | list
+      }}
+
+- name: Show missing service certificates
+  debug:
+    var: missing_service_certificates
+
+- name: Check if service certificates are required
+  set_fact:
+    need_service_certificates: "{{ missing_service_certificates | length > 0 }}"
+
+- name: Show certificate generation status
+  debug:
+    var: need_service_certificates
+
+- name: Generate bootstrap nginx config for service certificates
+  template:
+    src: nginx-bootstrap.conf.j2
+    dest: "/opt/{{ bootstrap_config.REPO_NAME }}/nginx/nginx.conf"
+    mode: "0644"
+  when: need_service_certificates
+
+- name: Start nginx for service certificate challenge
+  shell: docker compose up -d --force-recreate nginx
+  args:
+    chdir: "/opt/{{ bootstrap_config.REPO_NAME }}"
+  when: need_service_certificates
+
+- name: Wait for nginx bootstrap page
+  uri:
+    url: "http://{{ bootstrap_config.WG_DOMAIN }}"
+    status_code: 200
+    return_content: true
+  register: nginx_check
+  retries: 30
+  delay: 2
+  until: "'bootstrap' in nginx_check.content"
+  when: need_service_certificates
+
+- name: Generate service certificates
+  shell: >
+    docker compose run --rm certbot certonly
+    --webroot
+    -w /var/www/certbot
+    -d {{ item.item }}
+    --email {{ bootstrap_config.LETSENCRYPT_EMAIL }}
+    --agree-tos
+    --no-eff-email
+    --non-interactive
+  args:
+    chdir: "/opt/{{ bootstrap_config.REPO_NAME }}"
+  loop: "{{ missing_service_certificates }}"
+  when: need_service_certificates
+- name: Generate final nginx config for single deployment
+  template:
+    src: nginx-single-domain.conf.j2
+    dest: "/opt/{{ bootstrap_config.REPO_NAME }}/nginx/nginx.conf"
+    mode: "0644"
+  when:
+    - need_service_certificates
+    - bootstrap_config.DEPLOYMENT_MODE == "single"
+
+- name: Generate final nginx config for dual deployment
+  template:
+    src: nginx-dual-domain.conf.j2
+    dest: "/opt/{{ bootstrap_config.REPO_NAME }}/nginx/nginx.conf"
+    mode: "0644"
+  when:
+    - need_service_certificates
+    - bootstrap_config.DEPLOYMENT_MODE == "dual"
+
+- name: Restart nginx after service certificate generation
+  shell: docker compose up -d --force-recreate nginx
+  args:
+    chdir: "/opt/{{ bootstrap_config.REPO_NAME }}"
+  when: need_service_certificates

@@ -1,0 +1,162 @@
+name: Delete Service
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      service_name:
+        description: "Service name"
+        required: true
+
+jobs:
+  delete-service:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATEKEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+      - name: Validate service name
+        run: |
+          python3 - <<'EOF'
+          import re
+
+          name = "${{ github.event.inputs.service_name }}"
+
+          if not re.fullmatch(
+              r"[a-z0-9-]+",
+              name
+          ):
+              raise SystemExit(
+                  "Service name may contain only lowercase letters, numbers and hyphens"
+              )
+
+          print("Service name validation OK")
+          EOF
+      - name: Check if service exists
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SERVICE_NAME: ${{ github.event.inputs.service_name }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+          if [ -z "\$BOOTSTRAP_FILE" ]; then
+            echo ".bootstrap.env not found"
+            exit 1
+          fi
+
+          REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
+
+          if [ ! -f "\$REPO_DIR/services/${SERVICE_NAME}.yml" ]; then
+            echo "Service does not exist"
+            exit 1
+          fi
+
+          echo "Service exists"
+
+          EOF
+
+      - name: Read service domain
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+          SERVICE_NAME: ${{ github.event.inputs.service_name }}
+
+        run: |
+          SERVICE_DOMAIN=$(
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} \
+            "grep '^has_domain:' /opt/${REPO_NAME}/services/${SERVICE_NAME}.yml | grep -q true && grep '^domain:' /opt/${REPO_NAME}/services/${SERVICE_NAME}.yml | cut -d'\"' -f2 || true"
+          )
+
+          echo "SERVICE_DOMAIN=$SERVICE_DOMAIN" >> $GITHUB_ENV
+
+          echo "Service domain: $SERVICE_DOMAIN"
+
+
+
+      - name: Delete service certificate
+        if: env.SERVICE_DOMAIN != ''
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          REPO_NAME: ${{ github.event.repository.name }}
+          SERVICE_DOMAIN: ${{ env.SERVICE_DOMAIN }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          cd /opt/${REPO_NAME}
+
+          docker compose run --rm certbot \
+            delete \
+            --cert-name "${SERVICE_DOMAIN}" \
+            --non-interactive
+
+          EOF
+
+      - name: Delete service file
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SERVICE_NAME: ${{ github.event.inputs.service_name }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+          REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
+
+          rm "\$REPO_DIR/services/${SERVICE_NAME}.yml"
+
+          echo "Service deleted"
+
+          EOF
+
+      - name: Deploy configuration
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+          if [ -z "\$BOOTSTRAP_FILE" ]; then
+            echo ".bootstrap.env not found"
+            exit 1
+          fi
+
+          REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
+
+          cd "\$REPO_DIR/ansible"
+
+          ansible-playbook \
+            -i inventory.ini \
+            update-domains.yml
+
+          EOF

@@ -1,0 +1,18 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Upgrade packages
+  apt:
+    upgrade: dist
+
+- name: Install packages
+  apt:
+    name:
+      - git
+      - curl
+      - python3
+      - python3-pip
+      - apache2-utils
+    state: present

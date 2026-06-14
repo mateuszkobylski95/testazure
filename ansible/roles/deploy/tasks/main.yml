@@ -1,0 +1,6 @@
+---
+- name: Generate docker-compose file
+  template:
+    src: docker-compose-template.yml.j2
+    dest: "/opt/{{ bootstrap_config.REPO_NAME }}/docker-compose.yml"
+    mode: "0644"

@@ -1,0 +1,17 @@
+---
+- hosts: vpn
+  become: true
+
+
+  roles:
+    - load_config
+    - common
+    - docker
+    - directories
+    - routing
+    - load_services
+    - domain_validation
+    - deploy
+    - certbot
+    - containers
+    - security

@@ -1,0 +1,19 @@
+- name: Install WG route service
+  template:
+    src: wg-route.service.j2
+    dest: /etc/systemd/system/wg-route.service
+    mode: "0644"
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: true
+
+- name: Enable WG route service
+  systemd:
+    name: wg-route.service
+    enabled: true
+
+- name: Start WG route service
+  systemd:
+    name: wg-route.service
+    state: started

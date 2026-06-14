@@ -1,0 +1,6 @@
+---
+- name: Generate runtime environment file
+  template:
+    src: env.runtime.j2
+    dest: "/opt/{{ bootstrap_config.REPO_NAME }}/.env"
+    mode: "0600"

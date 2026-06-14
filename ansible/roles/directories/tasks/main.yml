@@ -1,0 +1,14 @@
+---
+- name: Create required directories
+  file:
+    path: "/opt/{{ bootstrap_config.REPO_NAME }}/{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - data/wireguard
+    - data/kuma
+    - certbot/conf
+    - certbot/www
+    - nginx
+    - services
+

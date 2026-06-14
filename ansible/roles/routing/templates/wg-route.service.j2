@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh WireGuard route
+After=docker.service
+After=network-online.target
+
+[Service]
+Type=oneshot
+
+ExecStart=/bin/sh -c 'sleep 30 && ip route del 10.8.0.0/24 2>/dev/null || true && ip route add 10.8.0.0/24 via 172.31.250.2'
+
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

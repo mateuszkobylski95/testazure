@@ -1,0 +1,62 @@
+---
+- name: Find service definitions
+  find:
+    paths: "/opt/{{ bootstrap_config.REPO_NAME }}/services"
+    patterns: "*.yml"
+    file_type: file
+  register: service_files
+
+- name: Load service definitions
+  include_vars:
+    file: "{{ item.path }}"
+    name: service
+  loop: "{{ service_files.files }}"
+  register: loaded_services
+  when: service_files.matched > 0
+
+- name: Build services list
+  set_fact:
+    vpn_services: >-
+      {{
+        (
+          loaded_services.results
+          | map(attribute='ansible_facts.service')
+          | list
+        )
+        if service_files.matched > 0
+        else []
+      }}
+
+- name: Build service domains list
+  set_fact:
+    service_domains: >-
+      {{
+        vpn_services
+        | selectattr('has_domain')
+        | map(attribute='domain')
+        | list
+      }}
+
+- name: Build domain services list
+  set_fact:
+    domain_services: >-
+      {{
+        vpn_services
+        | selectattr('has_domain')
+        | list
+      }}
+
+- name: Show domain services
+  debug:
+    var: domain_services
+
+
+- name: Show loaded services
+  debug:
+    var: vpn_services
+
+
+
+- name: Show service domains
+  debug:
+    var: service_domains

@@ -1,0 +1,11 @@
+---
+- name: Configure certbot renewal cron
+  cron:
+    name: "certbot-renew"
+    minute: "0"
+    hour: "3"
+    user: "{{ ansible_user | default('azureuser') }}"
+    job: >
+      cd /opt/{{ bootstrap_config.REPO_NAME }}
+      && docker compose run --rm certbot renew
+      && docker compose up -d --force-recreate nginx

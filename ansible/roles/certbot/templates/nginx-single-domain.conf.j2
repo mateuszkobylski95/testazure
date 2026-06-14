@@ -1,0 +1,157 @@
+events {}
+
+http {
+
+    server {
+
+        listen 80;
+
+        server_name {{ bootstrap_config.WG_DOMAIN }};
+
+        if ($host != "{{ bootstrap_config.WG_DOMAIN }}") {
+            return 444;
+        }
+
+        location ^~ /.well-known/acme-challenge/ {
+            auth_basic off;
+            root /var/www/certbot;
+        }
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    server {
+
+        listen 443 ssl;
+
+        server_name {{ bootstrap_config.WG_DOMAIN }};
+
+        if ($host != "{{ bootstrap_config.WG_DOMAIN }}") {
+            return 444;
+        }
+
+        ssl_certificate /etc/letsencrypt/live/{{ bootstrap_config.WG_DOMAIN }}/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/{{ bootstrap_config.WG_DOMAIN }}/privkey.pem;
+
+        auth_basic "Restricted";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        location / {
+
+            proxy_pass http://wg-easy:51821;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+    }
+
+    server {
+
+        listen 8443 ssl;
+
+        server_name {{ bootstrap_config.WG_DOMAIN }};
+
+        if ($host != "{{ bootstrap_config.WG_DOMAIN }}") {
+            return 444;
+        }
+
+        ssl_certificate /etc/letsencrypt/live/{{ bootstrap_config.WG_DOMAIN }}/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/{{ bootstrap_config.WG_DOMAIN }}/privkey.pem;
+
+        auth_basic "Restricted";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        location / {
+
+            proxy_pass http://uptime-kuma:3001;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+        }
+    }
+    {% for service in vpn_services %}
+    {% if not service.has_domain %}
+
+        server {
+
+            listen {{ service.public_port }} ssl;
+
+            server_name {{ bootstrap_config.WG_DOMAIN }};
+
+            if ($host != "{{ bootstrap_config.WG_DOMAIN }}") {
+                return 444;
+            }
+
+            ssl_certificate /etc/letsencrypt/live/{{ bootstrap_config.WG_DOMAIN }}/fullchain.pem;
+            ssl_certificate_key /etc/letsencrypt/live/{{ bootstrap_config.WG_DOMAIN }}/privkey.pem;
+
+            {% if service.basic_auth %}
+            auth_basic "Restricted";
+            auth_basic_user_file /etc/nginx/.htpasswd;
+            {% endif %}
+
+            location {{ service.path }} {
+
+                proxy_pass http://{{ service.vpn_ip }}:{{ service.local_port }};
+
+                proxy_set_header Host $host;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto https;
+            }
+        }
+
+    {% endif %}
+    {% endfor %}
+
+    {% for service in domain_services %}
+
+    server {
+
+        listen 80;
+
+        server_name {{ service.domain }};
+
+        location ^~ /.well-known/acme-challenge/ {
+            auth_basic off;
+            root /var/www/certbot;
+        }
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    server {
+
+        listen 443 ssl;
+
+        server_name {{ service.domain }};
+
+        ssl_certificate /etc/letsencrypt/live/{{ service.domain }}/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/{{ service.domain }}/privkey.pem;
+
+        {% if service.basic_auth %}
+        auth_basic "Restricted";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        {% endif %}
+
+        location / {
+
+            proxy_pass http://{{ service.vpn_ip }}:{{ service.local_port }};
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+        }
+    }
+
+    {% endfor %}
+}

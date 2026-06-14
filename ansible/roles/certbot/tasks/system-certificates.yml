@@ -1,0 +1,106 @@
+---
+- name: Check if WG certificate exists
+  stat:
+    path: "/opt/{{ bootstrap_config.REPO_NAME }}/certbot/conf/live/{{ bootstrap_config.WG_DOMAIN }}/fullchain.pem"
+  register: wg_cert
+
+- name: Check if Kuma certificate exists
+  stat:
+    path: "/opt/{{ bootstrap_config.REPO_NAME }}/certbot/conf/live/{{ bootstrap_config.KUMA_DOMAIN }}/fullchain.pem"
+  register: kuma_cert
+  when: bootstrap_config.DEPLOYMENT_MODE == "dual"
+
+- name: Generate bootstrap nginx config
+  template:
+    src: nginx-bootstrap.conf.j2
+    dest: "/opt/{{ bootstrap_config.REPO_NAME }}/nginx/nginx.conf"
+    mode: "0644"
+  when: >
+    not wg_cert.stat.exists or
+    (
+      bootstrap_config.DEPLOYMENT_MODE == "dual"
+      and not kuma_cert.stat.exists
+    )
+
+
+- name: Start nginx for ACME challenge
+  shell: docker compose up -d --force-recreate nginx
+  args:
+    chdir: "/opt/{{ bootstrap_config.REPO_NAME }}"
+  when: >
+    not wg_cert.stat.exists or
+    (
+      bootstrap_config.DEPLOYMENT_MODE == "dual"
+      and not kuma_cert.stat.exists
+    )
+- name: Wait for nginx bootstrap page
+  uri:
+    url: "http://{{ bootstrap_config.WG_DOMAIN }}"
+    status_code: 200
+    return_content: true
+  register: nginx_check
+  retries: 30
+  delay: 2
+  until: "'bootstrap' in nginx_check.content"
+  when: >
+    not wg_cert.stat.exists or
+    (
+      bootstrap_config.DEPLOYMENT_MODE == "dual"
+      and not kuma_cert.stat.exists
+    )
+
+- name: Generate certificate for WG domain
+  shell: >
+    docker compose run --rm certbot certonly
+    --webroot
+    -w /var/www/certbot
+    -d {{ bootstrap_config.WG_DOMAIN }}
+    --email {{ bootstrap_config.LETSENCRYPT_EMAIL }}
+    --agree-tos
+    --no-eff-email
+    --non-interactive
+  args:
+    chdir: "/opt/{{ bootstrap_config.REPO_NAME }}"
+  when: not wg_cert.stat.exists
+
+- name: Generate certificate for Kuma domain
+  shell: >
+    docker compose run --rm certbot certonly
+    --webroot
+    -w /var/www/certbot
+    -d {{ bootstrap_config.KUMA_DOMAIN }}
+    --email {{ bootstrap_config.LETSENCRYPT_EMAIL }}
+    --agree-tos
+    --no-eff-email
+    --non-interactive
+  args:
+    chdir: "/opt/{{ bootstrap_config.REPO_NAME }}"
+  when:
+    - bootstrap_config.DEPLOYMENT_MODE == "dual"
+    - not kuma_cert.stat.exists
+
+- name: Generate final nginx config for single deployment
+  template:
+    src: nginx-single-domain.conf.j2
+    dest: "/opt/{{ bootstrap_config.REPO_NAME }}/nginx/nginx.conf"
+    mode: "0644"
+  when: bootstrap_config.DEPLOYMENT_MODE == "single"
+
+- name: Generate final nginx config for dual deployment
+  template:
+    src: nginx-dual-domain.conf.j2
+    dest: "/opt/{{ bootstrap_config.REPO_NAME }}/nginx/nginx.conf"
+    mode: "0644"
+  when: bootstrap_config.DEPLOYMENT_MODE == "dual"
+
+- name: Restart nginx after certificate generation
+  shell: docker compose up -d --force-recreate nginx
+  args:
+    chdir: "/opt/{{ bootstrap_config.REPO_NAME }}"
+  when: >
+    not wg_cert.stat.exists or
+    (
+      bootstrap_config.DEPLOYMENT_MODE == "dual"
+      and not kuma_cert.stat.exists
+    )
+

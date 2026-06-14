@@ -1,0 +1,30 @@
+---
+- name: Read bootstrap environment file
+  slurp:
+    src: "/opt/{{ repo_name }}/.bootstrap.env"
+  register: bootstrap_env
+
+- name: Decode bootstrap environment
+  set_fact:
+    bootstrap_env_content: "{{ bootstrap_env.content | b64decode }}"
+
+- name: Parse bootstrap environment lines
+  set_fact:
+    bootstrap_env_lines: "{{ bootstrap_env_content.split('\n') }}"
+
+- name: Convert bootstrap env to dictionary
+  set_fact:
+    bootstrap_config: >-
+      {{
+        dict(
+          bootstrap_env_lines
+          | reject('equalto', '')
+          | map('split', '=', 1)
+        )
+      }}
+- name: Validate bootstrap configuration
+  assert:
+    that:
+      - bootstrap_config.REPO_NAME is defined
+      - bootstrap_config.DEPLOYMENT_MODE is defined
+      - bootstrap_config.WG_DOMAIN is defined

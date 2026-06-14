@@ -1,0 +1,6 @@
+---
+- import_tasks: system-certificates.yml
+
+- import_tasks: service-certificates.yml
+
+- import_tasks: renewal.yml

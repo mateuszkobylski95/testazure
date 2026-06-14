@@ -1,0 +1,282 @@
+name: Update Domains
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      wg_domain:
+        description: "WG-Easy domain"
+        required: true
+
+      kuma_domain:
+        description: "Uptime Kuma domain (optional)"
+        required: false
+
+jobs:
+  update-domains:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATEKEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Validate domains
+        run: |
+         WG="${{ github.event.inputs.wg_domain }}"
+         KUMA="${{ github.event.inputs.kuma_domain }}"
+
+         if [ -n "$KUMA" ] && [ "$WG" = "$KUMA" ]; then
+         echo "WG and Kuma domains must be different"
+         exit 1
+         fi
+
+      - name: Validate domain format
+        run: |
+          python3 - <<'EOF'
+          import re
+
+          domains = [
+              "${{ github.event.inputs.wg_domain }}"
+          ]
+
+          kuma = "${{ github.event.inputs.kuma_domain }}"
+
+          if kuma:
+              domains.append(kuma)
+
+          pattern = re.compile(
+              r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$"
+          )
+
+          for domain in domains:
+              if not pattern.match(domain):
+                  raise SystemExit(
+                      f"Invalid domain: {domain}"
+                  )
+
+          print("Domain validation OK")
+          EOF
+
+      - name: Validate domain DNS
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          WG_DOMAIN: ${{ github.event.inputs.wg_domain }}
+          KUMA_DOMAIN: ${{ github.event.inputs.kuma_domain }}
+
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+          ${SSH_USER}@${VM_IP} <<EOF
+
+          set -e
+
+          SERVER_IP=\$(curl -4 -s ifconfig.me)
+
+          WG_IP=\$(dig +short "${WG_DOMAIN}" | head -n1)
+
+          if [ -z "\$WG_IP" ]; then
+            echo "WG domain does not resolve"
+            exit 1
+          fi
+
+          if [ "\$WG_IP" != "\$SERVER_IP" ]; then
+            echo "WG domain resolves to \$WG_IP but server IP is \$SERVER_IP"
+            exit 1
+          fi
+
+          if [ -n "${KUMA_DOMAIN}" ]; then
+
+            KUMA_IP=\$(dig +short "${KUMA_DOMAIN}" | head -n1)
+
+            if [ -z "\$KUMA_IP" ]; then
+              echo "Kuma domain does not resolve"
+              exit 1
+            fi
+
+            if [ "\$KUMA_IP" != "\$SERVER_IP" ]; then
+              echo "Kuma domain resolves to \$KUMA_IP but server IP is \$SERVER_IP"
+              exit 1
+            fi
+
+          fi
+
+          echo "Domain DNS validation OK"
+
+          EOF
+
+      - name: Calculate deployment mode
+        run: |
+          if [ -z "${{ github.event.inputs.kuma_domain }}" ]; then
+            echo "DEPLOYMENT_MODE=single" >> $GITHUB_ENV
+          else
+            echo "DEPLOYMENT_MODE=dual" >> $GITHUB_ENV
+          fi
+
+      - name: Read current domains
+        env:
+            VM_IP: ${{ secrets.VM_IP }}
+            SSH_USER: ${{ secrets.SSH_USER }}
+
+            REPO_NAME: ${{ github.event.repository.name }}
+
+        run: |
+
+            OLD_WG_DOMAIN=$(
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} \
+            "grep '^WG_DOMAIN=' /opt/${REPO_NAME}/.bootstrap.env | cut -d'=' -f2"
+            )
+
+            OLD_KUMA_DOMAIN=$(
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} \
+            "grep '^KUMA_DOMAIN=' /opt/${REPO_NAME}/.bootstrap.env | cut -d'=' -f2"
+            )
+
+            echo "OLD_WG_DOMAIN=${OLD_WG_DOMAIN}" >> $GITHUB_ENV
+            echo "OLD_KUMA_DOMAIN=${OLD_KUMA_DOMAIN}" >> $GITHUB_ENV
+
+            echo "Old WG domain: ${OLD_WG_DOMAIN}"
+            echo "Old Kuma domain: ${OLD_KUMA_DOMAIN}"
+
+      - name: Detect domain changes
+        run: |
+
+            WG_CHANGED=false
+            KUMA_CHANGED=false
+
+            if [ "$OLD_WG_DOMAIN" != "${{ github.event.inputs.wg_domain }}" ]; then
+            WG_CHANGED=true
+            fi
+
+            if [ "$OLD_KUMA_DOMAIN" != "${{ github.event.inputs.kuma_domain }}" ]; then
+            KUMA_CHANGED=true
+            fi
+
+            echo "WG_CHANGED=$WG_CHANGED" >> $GITHUB_ENV
+            echo "KUMA_CHANGED=$KUMA_CHANGED" >> $GITHUB_ENV
+
+            echo "WG changed: $WG_CHANGED"
+            echo "Kuma changed: $KUMA_CHANGED"
+
+      - name: Delete old WG certificate
+        if: env.WG_CHANGED == 'true'
+        env:
+            VM_IP: ${{ secrets.VM_IP }}
+            SSH_USER: ${{ secrets.SSH_USER }}
+
+            REPO_NAME: ${{ github.event.repository.name }}
+
+            OLD_WG_DOMAIN: ${{ env.OLD_WG_DOMAIN }}
+
+        run: |
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} <<EOF
+
+            set -e
+
+            cd /opt/${REPO_NAME}
+
+            docker compose run --rm certbot \
+            delete \
+            --cert-name "${OLD_WG_DOMAIN}" \
+            --non-interactive
+
+            EOF
+
+      - name: Delete old Kuma certificate
+        if: env.KUMA_CHANGED == 'true' && env.OLD_KUMA_DOMAIN != ''
+        env:
+            VM_IP: ${{ secrets.VM_IP }}
+            SSH_USER: ${{ secrets.SSH_USER }}
+
+            REPO_NAME: ${{ github.event.repository.name }}
+
+            OLD_KUMA_DOMAIN: ${{ env.OLD_KUMA_DOMAIN }}
+
+        run: |
+            ssh -o StrictHostKeyChecking=no \
+            ${SSH_USER}@${VM_IP} <<EOF
+
+            set -e
+
+            cd /opt/${REPO_NAME}
+
+            docker compose run --rm certbot \
+            delete \
+            --cert-name "${OLD_KUMA_DOMAIN}" \
+            --non-interactive
+
+            EOF
+
+      - name: Update domains
+        env:
+          VM_IP: ${{ secrets.VM_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          WG_DOMAIN: ${{ github.event.inputs.wg_domain }}
+          KUMA_DOMAIN: ${{ github.event.inputs.kuma_domain }}
+
+          DEPLOYMENT_MODE: ${{ env.DEPLOYMENT_MODE }}
+
+        run: |
+            ssh -o StrictHostKeyChecking=no \
+                ${SSH_USER}@${VM_IP} <<EOF
+
+
+
+            set -e
+
+            BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+
+            if [ -z "\$BOOTSTRAP_FILE" ]; then
+                echo ".bootstrap.env not found"
+                exit 1
+            fi
+
+            REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
+
+            SERVICES_DIR="\$REPO_DIR/services"
+
+
+            if [ -d "\$SERVICES_DIR" ]; then
+
+                if grep -R "^domain:.*${WG_DOMAIN}" "\$SERVICES_DIR" >/dev/null 2>&1; then
+                echo "WG domain already used by service"
+                exit 1
+                fi
+
+                if [ -n "${KUMA_DOMAIN}" ]; then
+
+                if grep -R "^domain:.*${KUMA_DOMAIN}" "\$SERVICES_DIR" >/dev/null 2>&1; then
+                    echo "Kuma domain already used by service"
+                    exit 1
+                fi
+
+                fi
+
+            fi
+
+
+            sed -i "s|^WG_DOMAIN=.*|WG_DOMAIN=${WG_DOMAIN}|" "\$BOOTSTRAP_FILE"
+
+            if grep -q '^KUMA_DOMAIN=' "\$BOOTSTRAP_FILE"; then
+                sed -i "s|^KUMA_DOMAIN=.*|KUMA_DOMAIN=${KUMA_DOMAIN}|" "\$BOOTSTRAP_FILE"
+            else
+                echo "KUMA_DOMAIN=${KUMA_DOMAIN}" >> "\$BOOTSTRAP_FILE"
+            fi
+
+            sed -i "s|^DEPLOYMENT_MODE=.*|DEPLOYMENT_MODE=${DEPLOYMENT_MODE}|" "\$BOOTSTRAP_FILE"
+
+            cd "\$REPO_DIR/ansible"
+
+            ansible-playbook \
+                -i inventory.ini \
+                update-domains.yml
+
+            EOF

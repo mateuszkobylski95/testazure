@@ -1,0 +1,52 @@
+---
+- name: Get server public IP
+  shell: curl -4 -s ifconfig.me
+  register: server_ip
+  changed_when: false
+
+- name: Resolve WG domain
+  shell: dig +short {{ bootstrap_config.WG_DOMAIN }} | head -n1
+  register: wg_domain_ip
+  changed_when: false
+
+- name: Validate WG domain
+  assert:
+    that:
+      - wg_domain_ip.stdout == server_ip.stdout
+    fail_msg: >
+      WG_DOMAIN ({{ bootstrap_config.WG_DOMAIN }})
+      resolves to {{ wg_domain_ip.stdout }}
+      but server IP is {{ server_ip.stdout }}
+
+- name: Resolve Kuma domain
+  shell: dig +short {{ bootstrap_config.KUMA_DOMAIN }} | head -n1
+  register: kuma_domain_ip
+  changed_when: false
+  when: bootstrap_config.DEPLOYMENT_MODE == "dual"
+
+- name: Validate Kuma domain
+  assert:
+    that:
+      - kuma_domain_ip.stdout == server_ip.stdout
+    fail_msg: >
+      KUMA_DOMAIN ({{ bootstrap_config.KUMA_DOMAIN }})
+      resolves to {{ kuma_domain_ip.stdout }}
+      but server IP is {{ server_ip.stdout }}
+  when: bootstrap_config.DEPLOYMENT_MODE == "dual"
+
+- name: Resolve service domains
+  shell: dig +short {{ item }} | head -n1
+  register: service_domain_ips
+  changed_when: false
+  loop: "{{ service_domains }}"
+
+- name: Validate service domains
+  assert:
+    that:
+      - item.stdout == server_ip.stdout
+    fail_msg: >
+      Service domain ({{ item.item }})
+      resolves to {{ item.stdout }}
+      but server IP is {{ server_ip.stdout }}
+  loop: "{{ service_domain_ips.results }}"
+
