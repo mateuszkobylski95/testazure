@@ -522,6 +522,13 @@ jobs:
 
             EOF
 
+      - name: Sync NSG public ports
+        env:
+          VM_IP: ${{ steps.tf.outputs.public_ip }}
+          SSH_USER: azureuser
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+        run: bash scripts/terraform-sync-nsg.sh
+
       - name: Deploy service
         env:
             VM_IP: ${{ steps.tf.outputs.public_ip }}

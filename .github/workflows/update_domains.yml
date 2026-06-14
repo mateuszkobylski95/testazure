@@ -90,15 +90,13 @@ jobs:
             echo "SINGLE_DOMAIN_MODE=false" >> $GITHUB_ENV
           fi
 
-      - name: Update Terraform NSG for deployment mode
-        working-directory: terraform
-        run: |
-          terraform apply \
-            -auto-approve \
-            -var="resource_group_name=$(terraform output -raw resource_group_name)" \
-            -var="vm_name=$(terraform output -raw vm_name)" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="single_domain_mode=${{ env.SINGLE_DOMAIN_MODE }}"
+      - name: Update Terraform NSG
+        env:
+          VM_IP: ${{ steps.tf.outputs.public_ip }}
+          SSH_USER: azureuser
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+          SINGLE_DOMAIN_MODE_OVERRIDE: ${{ env.SINGLE_DOMAIN_MODE }}
+        run: bash scripts/terraform-sync-nsg.sh
 
       - name: Validate domains
         env:

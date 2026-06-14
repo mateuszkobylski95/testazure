@@ -23,3 +23,16 @@ variable "single_domain_mode" {
   type    = bool
   default = false
 }
+
+variable "public_ports" {
+  type    = list(number)
+  default = []
+
+  validation {
+    condition = alltrue([
+      for port in var.public_ports :
+      port >= 1 && port <= 65535
+    ])
+    error_message = "Public ports must be between 1 and 65535."
+  }
+}

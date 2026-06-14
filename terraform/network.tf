@@ -106,6 +106,26 @@ resource "azurerm_network_security_rule" "wireguard" {
   resource_group_name         = azurerm_resource_group.this.name
   network_security_group_name = azurerm_network_security_group.this.name
 }
+
+resource "azurerm_network_security_rule" "public_ports" {
+  for_each = local.public_port_priorities
+
+  name                        = "allow-public-port-${each.key}"
+  priority                    = each.value
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+
+  source_port_range           = "*"
+  destination_port_range      = each.key
+
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+
+  resource_group_name         = azurerm_resource_group.this.name
+  network_security_group_name = azurerm_network_security_group.this.name
+}
+
 resource "azurerm_subnet_network_security_group_association" "this" {
   subnet_id                 = azurerm_subnet.this.id
   network_security_group_id = azurerm_network_security_group.this.id
