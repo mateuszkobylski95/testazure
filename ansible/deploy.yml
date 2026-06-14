@@ -5,9 +5,9 @@
   roles:
     - load_config
     - directories
-    - routing
     - load_services
     - deploy
     - certbot
     - containers
+    - routing
 

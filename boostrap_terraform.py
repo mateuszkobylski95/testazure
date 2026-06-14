@@ -775,6 +775,22 @@ if push_backend in [
 
 else:
 
+    print()
     print(
-        "Skipping git push."
+        "Pominięto wysyłkę backend.tf do repozytorium."
+    )
+    print()
+    print(
+        "Ręcznie przekaż plik do zdalnego repozytorium:"
+    )
+    print(
+        f"  Lokalny plik: {backend_file.resolve()}"
+    )
+    print(
+        "  Docelowa ścieżka w repo: terraform/backend.tf"
+    )
+    print()
+    print(
+        "Bez tego pliku workflowy GitHub Actions "
+        "nie połączą się ze stanem Terraform."
     )

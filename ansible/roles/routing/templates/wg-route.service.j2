@@ -1,12 +1,19 @@
 [Unit]
 Description=Refresh WireGuard route
-After=docker.service
-After=network-online.target
+After=docker.service network-online.target
+Wants=docker.service
 
 [Service]
 Type=oneshot
 
-ExecStart=/bin/sh -c 'sleep 30 && ip route del 10.8.0.0/24 2>/dev/null || true && ip route add 10.8.0.0/24 via 172.31.250.2'
+ExecStart=/bin/sh -c '\
+GW="{{ bootstrap_config.WG_EASY_IP }}"; \
+for i in $(seq 1 60); do \
+  ip route get "$GW" >/dev/null 2>&1 && break; \
+  sleep 2; \
+done; \
+ip route del 10.8.0.0/24 2>/dev/null || true; \
+ip route add 10.8.0.0/24 via "$GW"'
 
 RemainAfterExit=yes
 

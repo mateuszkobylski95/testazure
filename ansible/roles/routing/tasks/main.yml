@@ -13,7 +13,12 @@
     name: wg-route.service
     enabled: true
 
+- name: Reset failed WG route service state
+  command: systemctl reset-failed wg-route.service
+  failed_when: false
+  changed_when: false
+
 - name: Start WG route service
   systemd:
     name: wg-route.service
-    state: started
+    state: restarted

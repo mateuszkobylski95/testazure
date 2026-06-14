@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - terraform/backend.tf
 
 concurrency:
   group: production-deploy
