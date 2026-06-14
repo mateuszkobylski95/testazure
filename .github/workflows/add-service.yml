@@ -46,11 +46,43 @@ on:
           - "true"
           - "false"
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   add-service:
     runs-on: ubuntu-latest
 
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
     steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Read Terraform Outputs
+        working-directory: terraform
+        id: tf
+        run: |
+          echo "public_ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
 
       - name: Validate service name
         run: |
@@ -207,13 +239,13 @@ jobs:
       - name: Setup SSH key
         run: |
             mkdir -p ~/.ssh
-            echo "${{ secrets.SSH_PRIVATEKEY }}" > ~/.ssh/id_rsa
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
             chmod 600 ~/.ssh/id_rsa
 
       - name: Check if service already exists
         env:
-            VM_IP: ${{ secrets.VM_IP }}
-            SSH_USER: ${{ secrets.SSH_USER }}
+            VM_IP: ${{ steps.tf.outputs.public_ip }}
+            SSH_USER: azureuser
             SERVICE_NAME: ${{ github.event.inputs.service_name }}
 
         run: |
@@ -243,8 +275,8 @@ jobs:
       - name: Check domain availability
         if: github.event.inputs.has_domain == 'true'
         env:
-            VM_IP: ${{ secrets.VM_IP }}
-            SSH_USER: ${{ secrets.SSH_USER }}
+            VM_IP: ${{ steps.tf.outputs.public_ip }}
+            SSH_USER: azureuser
             DOMAIN: ${{ github.event.inputs.domain }}
 
         run: |
@@ -293,8 +325,8 @@ jobs:
       - name: Validate domain DNS
         if: github.event.inputs.has_domain == 'true'
         env:
-          VM_IP: ${{ secrets.VM_IP }}
-          SSH_USER: ${{ secrets.SSH_USER }}
+          VM_IP: ${{ steps.tf.outputs.public_ip }}
+          SSH_USER: azureuser
           DOMAIN: ${{ github.event.inputs.domain }}
 
         run: |
@@ -325,8 +357,8 @@ jobs:
       - name: Check public port availability
         if: github.event.inputs.has_domain == 'false'
         env:
-            VM_IP: ${{ secrets.VM_IP }}
-            SSH_USER: ${{ secrets.SSH_USER }}
+            VM_IP: ${{ steps.tf.outputs.public_ip }}
+            SSH_USER: azureuser
             PUBLIC_PORT: ${{ github.event.inputs.public_port }}
 
         run: |
@@ -368,8 +400,8 @@ jobs:
 
       - name: Check backend availability
         env:
-            VM_IP: ${{ secrets.VM_IP }}
-            SSH_USER: ${{ secrets.SSH_USER }}
+            VM_IP: ${{ steps.tf.outputs.public_ip }}
+            SSH_USER: azureuser
 
             VPN_IP: ${{ github.event.inputs.vpn_ip }}
             LOCAL_PORT: ${{ github.event.inputs.local_port }}
@@ -419,8 +451,8 @@ jobs:
 
       - name: Create service definition
         env:
-            VM_IP: ${{ secrets.VM_IP }}
-            SSH_USER: ${{ secrets.SSH_USER }}
+            VM_IP: ${{ steps.tf.outputs.public_ip }}
+            SSH_USER: azureuser
 
             SERVICE_NAME: ${{ github.event.inputs.service_name }}
             VPN_IP: ${{ github.event.inputs.vpn_ip }}
@@ -492,8 +524,8 @@ jobs:
 
       - name: Deploy service
         env:
-            VM_IP: ${{ secrets.VM_IP }}
-            SSH_USER: ${{ secrets.SSH_USER }}
+            VM_IP: ${{ steps.tf.outputs.public_ip }}
+            SSH_USER: azureuser
 
         run: |
             ssh -o StrictHostKeyChecking=no \
