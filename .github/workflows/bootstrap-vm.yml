@@ -13,11 +13,11 @@ on:
         required: true
 
       wg_domain:
-        description: "WG-Easy domain (if you want use AZURE FQDN LEFT THIS FIELD EMPTY)"
+        description: "WG-Easy domain (leave empty to use the Azure FQDN)"
         required: false
 
       kuma_domain:
-        description: "Uptime Kuma domain (optiona   l, when you don't have other domain)"
+        description: "Uptime Kuma domain (optional)"
         required: false
 
       docker_subnet:
@@ -57,27 +57,25 @@ jobs:
         run: terraform init
 
       - name: Calculate deployment mode
+        id: mode
         run: |
-            if [ -z "${{ github.event.inputs.kuma_domain }}" ]; then
-                echo "DEPLOYMENT_MODE=single" >> $GITHUB_ENV
-                echo "SINGLE_DOMAIN_MODE=true" >> $GITHUB_ENV
-            else
-                echo "DEPLOYMENT_MODE=dual" >> $GITHUB_ENV
-                echo "SINGLE_DOMAIN_MODE=false" >> $GITHUB_ENV
-            fi
-
-
+          if [ -z "${{ github.event.inputs.kuma_domain }}" ]; then
+            echo "deployment_mode=single" >> $GITHUB_OUTPUT
+            echo "single_domain_mode=true" >> $GITHUB_OUTPUT
+          else
+            echo "deployment_mode=dual" >> $GITHUB_OUTPUT
+            echo "single_domain_mode=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Terraform Apply
         working-directory: terraform
         run: |
-            terraform apply \
+          terraform apply \
             -auto-approve \
             -var="resource_group_name=${{ github.event.inputs.resource_group_name }}" \
             -var="vm_name=${{ github.event.inputs.vm_name }}" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="single_domain_mode=${SINGLE_DOMAIN_MODE}"
-
+            -var="single_domain_mode=${{ steps.mode.outputs.single_domain_mode }}"
 
       - name: Read Terraform Outputs
         working-directory: terraform
@@ -89,39 +87,51 @@ jobs:
 
       - name: Validate Terraform outputs
         run: |
-            test -n "${{ steps.tf.outputs.public_ip }}"
-            test -n "${{ steps.tf.outputs.azure_subnet }}"
-            test -n "${{ steps.tf.outputs.fqdn }}"
+          test -n "${{ steps.tf.outputs.public_ip }}"
+          test -n "${{ steps.tf.outputs.azure_subnet }}"
+          test -n "${{ steps.tf.outputs.fqdn }}"
 
       - name: Resolve domains
+        id: domains
         run: |
-            if [ -z "${{ github.event.inputs.wg_domain }}" ]; then
-            echo "WG_DOMAIN=${{ steps.tf.outputs.fqdn }}" >> $GITHUB_ENV
-            else
-            echo "WG_DOMAIN=${{ github.event.inputs.wg_domain }}" >> $GITHUB_ENV
-            fi
+          if [ -z "${{ github.event.inputs.wg_domain }}" ]; then
+            echo "wg_domain=${{ steps.tf.outputs.fqdn }}" >> $GITHUB_OUTPUT
+          else
+            echo "wg_domain=${{ github.event.inputs.wg_domain }}" >> $GITHUB_OUTPUT
+          fi
 
-            echo "KUMA_DOMAIN=${{ github.event.inputs.kuma_domain }}" >> $GITHUB_ENV
+          echo "kuma_domain=${{ github.event.inputs.kuma_domain }}" >> $GITHUB_OUTPUT
+
+      - name: Check if DNS wait is required
+        id: dns_check
+        run: |
+          NEEDS=false
+          WG_CUSTOM=false
+
+          if [ -n "${{ github.event.inputs.wg_domain }}" ]; then
+            NEEDS=true
+            WG_CUSTOM=true
+          fi
+
+          if [ -n "${{ github.event.inputs.kuma_domain }}" ]; then
+            NEEDS=true
+          fi
+
+          echo "needs_dns_wait=${NEEDS}" >> $GITHUB_OUTPUT
+          echo "wg_domain_custom=${WG_CUSTOM}" >> $GITHUB_OUTPUT
 
       - name: Validate required secrets
         run: |
-            test -n "${{ secrets.SSH_PRIVATE_KEY }}"
-            test -n "${{ secrets.SSH_PUBLIC_KEY }}"
-            test -n "${{ secrets.WG_ADMIN_USER }}"
-            test -n "${{ secrets.WG_ADMIN_PASSWORD }}"
-            test -n "${{ secrets.NGINX_BASIC_AUTH_USER }}"
-            test -n "${{ secrets.NGINX_BASIC_AUTH_PASSWORD }}"
-            test -n "${{ secrets.LETSENCRYPT_EMAIL }}"
-            test -n "${{ secrets.AZURE_CLIENT_ID }}"
-            test -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-            test -n "${{ secrets.AZURE_TENANT_ID }}"
-
-
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          test -n "${{ secrets.SSH_PRIVATE_KEY }}"
+          test -n "${{ secrets.SSH_PUBLIC_KEY }}"
+          test -n "${{ secrets.WG_ADMIN_USER }}"
+          test -n "${{ secrets.WG_ADMIN_PASSWORD }}"
+          test -n "${{ secrets.NGINX_BASIC_AUTH_USER }}"
+          test -n "${{ secrets.NGINX_BASIC_AUTH_PASSWORD }}"
+          test -n "${{ secrets.LETSENCRYPT_EMAIL }}"
+          test -n "${{ secrets.AZURE_CLIENT_ID }}"
+          test -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          test -n "${{ secrets.AZURE_TENANT_ID }}"
 
       - name: Validate Docker subnet
         run: |
@@ -131,27 +141,15 @@ jobs:
           docker_subnet = "${{ github.event.inputs.docker_subnet }}"
           azure_subnet = "${{ steps.tf.outputs.azure_subnet }}"
 
-          docker_net = ipaddress.ip_network(
-              docker_subnet,
-              strict=True
-          )
-
-          azure_net = ipaddress.ip_network(
-              azure_subnet,
-              strict=True
-          )
+          docker_net = ipaddress.ip_network(docker_subnet, strict=True)
+          azure_net = ipaddress.ip_network(azure_subnet, strict=True)
+          vpn = ipaddress.ip_network("10.8.0.0/24")
 
           if not docker_net.is_private:
-              raise SystemExit(
-                  f"{docker_subnet} is not a private subnet"
-              )
+              raise SystemExit(f"{docker_subnet} is not a private subnet")
 
           if docker_net.prefixlen != 24:
-              raise SystemExit(
-                  f"{docker_subnet} must be a /24 subnet"
-              )
-
-          vpn = ipaddress.ip_network("10.8.0.0/24")
+              raise SystemExit(f"{docker_subnet} must be a /24 subnet")
 
           if docker_net.overlaps(vpn):
               raise SystemExit(
@@ -168,29 +166,29 @@ jobs:
 
       - name: Validate domains
         run: |
-            WG="${WG_DOMAIN}"
-            KUMA="${KUMA_DOMAIN}"
+          WG="${{ steps.domains.outputs.wg_domain }}"
+          KUMA="${{ steps.domains.outputs.kuma_domain }}"
 
-            if [ -n "$WG" ] && [ -n "$KUMA" ] && [ "$WG" = "$KUMA" ]; then
+          if [ -n "$KUMA" ] && [ "$WG" = "$KUMA" ]; then
             echo "WG and Kuma domains must be different"
             exit 1
-            fi
+          fi
 
       - name: Validate domain format
+        if: steps.dns_check.outputs.needs_dns_wait == 'true'
         run: |
           python3 - <<'EOF'
           import re
 
           domains = []
 
-          wg = "${{ env.WG_DOMAIN }}"
-          kuma = "${{ env.KUMA_DOMAIN }}"
+          if "${{ steps.dns_check.outputs.wg_domain_custom }}" == "true":
+              domains.append("${{ steps.domains.outputs.wg_domain }}")
 
-          if wg:
-             domains.append(wg)
+          kuma = "${{ steps.domains.outputs.kuma_domain }}".strip()
 
           if kuma:
-             domains.append(kuma)
+              domains.append(kuma)
 
           pattern = re.compile(
               r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$"
@@ -198,28 +196,138 @@ jobs:
 
           for domain in domains:
               if not pattern.match(domain):
-                  raise SystemExit(
-                      f"Invalid domain: {domain}"
-                  )
+                  raise SystemExit(f"Invalid domain: {domain}")
 
           print("Domain validation OK")
           EOF
 
+      - name: Calculate docker network base
+        id: docker_base
+        run: |
+          SUBNET="${{ github.event.inputs.docker_subnet }}"
+          BASE=$(echo "$SUBNET" | cut -d'/' -f1 | awk -F. '{print $1"."$2"."$3}')
+          echo "docker_network_base=$BASE" >> $GITHUB_OUTPUT
+
+      - name: DNS configuration instructions
+        if: steps.dns_check.outputs.needs_dns_wait == 'true'
+        run: |
+          {
+            echo "## DNS configuration required"
+            echo ""
+            echo "VM public IP: **${{ steps.tf.outputs.public_ip }}**"
+            echo ""
+            echo "Create the following DNS A records at your hosting provider:"
+            echo ""
+
+            if [ "${{ steps.dns_check.outputs.wg_domain_custom }}" = "true" ]; then
+              echo "- **WG-Easy:** \`${{ steps.domains.outputs.wg_domain }}\` → \`${{ steps.tf.outputs.public_ip }}\`"
+            fi
+
+            if [ -n "${{ steps.domains.outputs.kuma_domain }}" ]; then
+              echo "- **Uptime Kuma:** \`${{ steps.domains.outputs.kuma_domain }}\` → \`${{ steps.tf.outputs.public_ip }}\`"
+            fi
+
+            echo ""
+            echo "The workflow will check DNS every 15 seconds for up to 10 minutes and continue as soon as records are ready."
+          } >> $GITHUB_STEP_SUMMARY
+
+          echo "========================================"
+          echo "DNS CONFIGURATION REQUIRED"
+          echo "========================================"
+          echo "VM public IP: ${{ steps.tf.outputs.public_ip }}"
+          echo ""
+
+          if [ "${{ steps.dns_check.outputs.wg_domain_custom }}" = "true" ]; then
+            echo "WG-Easy:     ${{ steps.domains.outputs.wg_domain }}  ->  A  ->  ${{ steps.tf.outputs.public_ip }}"
+          fi
+
+          if [ -n "${{ steps.domains.outputs.kuma_domain }}" ]; then
+            echo "Uptime Kuma: ${{ steps.domains.outputs.kuma_domain }}  ->  A  ->  ${{ steps.tf.outputs.public_ip }}"
+          fi
+
+          echo ""
+          echo "Waiting up to 10 minutes for DNS propagation..."
+
+      - name: Wait for domain DNS
+        if: steps.dns_check.outputs.needs_dns_wait == 'true'
+        env:
+          SERVER_IP: ${{ steps.tf.outputs.public_ip }}
+          WG_DOMAIN: ${{ steps.domains.outputs.wg_domain }}
+          KUMA_DOMAIN: ${{ steps.domains.outputs.kuma_domain }}
+          WG_DOMAIN_CUSTOM: ${{ steps.dns_check.outputs.wg_domain_custom }}
+        run: |
+          set -e
+
+          MAX_WAIT=600
+          INTERVAL=15
+          START=$SECONDS
+
+          resolve_domain() {
+            dig +short "$1" 2>/dev/null | grep -E '^[0-9.]+$' | head -n1
+          }
+
+          dns_ready() {
+            if [ "${WG_DOMAIN_CUSTOM}" = "true" ]; then
+              WG_IP="$(resolve_domain "${WG_DOMAIN}")"
+              if [ -z "$WG_IP" ] || [ "$WG_IP" != "$SERVER_IP" ]; then
+                return 1
+              fi
+              echo "WG domain OK: ${WG_DOMAIN} -> ${WG_IP}"
+            fi
+
+            if [ -n "${KUMA_DOMAIN}" ]; then
+              KUMA_IP="$(resolve_domain "${KUMA_DOMAIN}")"
+              if [ -z "$KUMA_IP" ] || [ "$KUMA_IP" != "$SERVER_IP" ]; then
+                return 1
+              fi
+              echo "Kuma domain OK: ${KUMA_DOMAIN} -> ${KUMA_IP}"
+            fi
+
+            return 0
+          }
+
+          while true; do
+            ELAPSED=$((SECONDS - START))
+
+            if dns_ready; then
+              echo "All required DNS records are ready after ${ELAPSED}s"
+              exit 0
+            fi
+
+            if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+              echo "DNS not ready after 10 minutes"
+              echo "Expected server IP: ${SERVER_IP}"
+
+              if [ "${WG_DOMAIN_CUSTOM}" = "true" ]; then
+                WG_IP="$(resolve_domain "${WG_DOMAIN}")"
+                echo "WG domain (${WG_DOMAIN}) resolves to: ${WG_IP:-<no answer>}"
+              fi
+
+              if [ -n "${KUMA_DOMAIN}" ]; then
+                KUMA_IP="$(resolve_domain "${KUMA_DOMAIN}")"
+                echo "Kuma domain (${KUMA_DOMAIN}) resolves to: ${KUMA_IP:-<no answer>}"
+              fi
+
+              exit 1
+            fi
+
+            echo "DNS not ready yet (${ELAPSED}s / ${MAX_WAIT}s)..."
+            sleep "$INTERVAL"
+          done
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
       - name: Show bootstrap configuration
         run: |
-            echo "WG_DOMAIN=${WG_DOMAIN}"
-            echo "KUMA_DOMAIN=${KUMA_DOMAIN}"
-            echo "DOCKER_SUBNET=${{ github.event.inputs.docker_subnet }}"
-            echo "DEPLOYMENT_MODE=${DEPLOYMENT_MODE}"
-            echo "AZURE_SUBNET=${{ steps.tf.outputs.azure_subnet }}"
-      - name: Calculate docker network base
-        run: |
-         SUBNET="${{ github.event.inputs.docker_subnet }}"
-         BASE=$(echo "$SUBNET" | cut -d'/' -f1 | awk -F. '{print $1"."$2"."$3}')
-
-         echo "DOCKER_NETWORK_BASE=$BASE"
-
-         echo "DOCKER_NETWORK_BASE=$BASE" >> $GITHUB_ENV
+          echo "WG_DOMAIN=${{ steps.domains.outputs.wg_domain }}"
+          echo "KUMA_DOMAIN=${{ steps.domains.outputs.kuma_domain }}"
+          echo "DOCKER_SUBNET=${{ github.event.inputs.docker_subnet }}"
+          echo "DEPLOYMENT_MODE=${{ steps.mode.outputs.deployment_mode }}"
+          echo "AZURE_SUBNET=${{ steps.tf.outputs.azure_subnet }}"
 
       - name: Bootstrap server
         env:
@@ -227,18 +335,16 @@ jobs:
           VM_IP: ${{ steps.tf.outputs.public_ip }}
           REPO_NAME: ${{ github.event.repository.name }}
           REPO_URL: https://github.com/${{ github.repository }}.git
-          WG_DOMAIN: ${{ env.WG_DOMAIN }}
-          KUMA_DOMAIN: ${{ env.KUMA_DOMAIN }}
+          WG_DOMAIN: ${{ steps.domains.outputs.wg_domain }}
+          KUMA_DOMAIN: ${{ steps.domains.outputs.kuma_domain }}
           DOCKER_SUBNET: ${{ github.event.inputs.docker_subnet }}
           WG_ADMIN_USER: ${{ secrets.WG_ADMIN_USER }}
           WG_ADMIN_PASSWORD: ${{ secrets.WG_ADMIN_PASSWORD }}
-
           NGINX_BASIC_AUTH_USER: ${{ secrets.NGINX_BASIC_AUTH_USER }}
           NGINX_BASIC_AUTH_PASSWORD: ${{ secrets.NGINX_BASIC_AUTH_PASSWORD }}
-
           LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
-          DOCKER_NETWORK_BASE: ${{ env.DOCKER_NETWORK_BASE }}
-          DEPLOYMENT_MODE: ${{ env.DEPLOYMENT_MODE }}
+          DOCKER_NETWORK_BASE: ${{ steps.docker_base.outputs.docker_network_base }}
+          DEPLOYMENT_MODE: ${{ steps.mode.outputs.deployment_mode }}
         run: |
           set -e
 
@@ -259,112 +365,57 @@ jobs:
             fi
 
             sudo apt-get update
-            sudo apt-get install -y git
-            sudo apt-get install -y gettext-base
-            sudo apt-get install -y ansible
-            sudo apt-get install -y apache2-utils
+            sudo apt-get install -y git gettext-base ansible apache2-utils
 
             cd /opt
-
             sudo git clone '${REPO_URL}'
-
             sudo chown -R ${SSH_USER}:${SSH_USER} /opt/${REPO_NAME}
 
             {
-            echo "WG_DOMAIN=${WG_DOMAIN}"
-            echo "KUMA_DOMAIN=${KUMA_DOMAIN}"
-
-            echo "DOCKER_SUBNET=${DOCKER_SUBNET}"
-            echo "DOCKER_NETWORK_BASE=${DOCKER_NETWORK_BASE}"
-
-            echo "WG_EASY_IP=${DOCKER_NETWORK_BASE}.2"
-            echo "KUMA_IP=${DOCKER_NETWORK_BASE}.3"
-            echo "NGINX_IP=${DOCKER_NETWORK_BASE}.4"
-            echo "LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}"
-
-            echo "DEPLOYMENT_MODE=${DEPLOYMENT_MODE}"
-            echo "REPO_NAME=${REPO_NAME}"
-
+              echo \"WG_DOMAIN=${WG_DOMAIN}\"
+              echo \"KUMA_DOMAIN=${KUMA_DOMAIN}\"
+              echo \"DOCKER_SUBNET=${DOCKER_SUBNET}\"
+              echo \"DOCKER_NETWORK_BASE=${DOCKER_NETWORK_BASE}\"
+              echo \"WG_EASY_IP=${DOCKER_NETWORK_BASE}.2\"
+              echo \"KUMA_IP=${DOCKER_NETWORK_BASE}.3\"
+              echo \"NGINX_IP=${DOCKER_NETWORK_BASE}.4\"
+              echo \"LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}\"
+              echo \"DEPLOYMENT_MODE=${DEPLOYMENT_MODE}\"
+              echo \"REPO_NAME=${REPO_NAME}\"
             } > /opt/${REPO_NAME}/.bootstrap.env
 
-            export WG_DOMAIN="${WG_DOMAIN}"
-            export DOCKER_SUBNET="${DOCKER_SUBNET}"
-            export WG_ADMIN_USER="${WG_ADMIN_USER}"
-            export WG_ADMIN_PASSWORD="${WG_ADMIN_PASSWORD}"
-            export REPO_NAME="${REPO_NAME}"
-            export KUMA_DOMAIN="${KUMA_DOMAIN}"
-            export WG_EASY_IP="${DOCKER_NETWORK_BASE}.2"
-            export KUMA_IP="${DOCKER_NETWORK_BASE}.3"
-            export NGINX_IP="${DOCKER_NETWORK_BASE}.4"
+            export WG_DOMAIN=\"${WG_DOMAIN}\"
+            export DOCKER_SUBNET=\"${DOCKER_SUBNET}\"
+            export WG_ADMIN_USER=\"${WG_ADMIN_USER}\"
+            export WG_ADMIN_PASSWORD=\"${WG_ADMIN_PASSWORD}\"
+            export REPO_NAME=\"${REPO_NAME}\"
+            export KUMA_DOMAIN=\"${KUMA_DOMAIN}\"
+            export WG_EASY_IP=\"${DOCKER_NETWORK_BASE}.2\"
+            export KUMA_IP=\"${DOCKER_NETWORK_BASE}.3\"
+            export NGINX_IP=\"${DOCKER_NETWORK_BASE}.4\"
 
             cd /opt/${REPO_NAME}
-
             mkdir -p /opt/${REPO_NAME}/nginx
-
             envsubst < .env.template > .env
 
             htpasswd -bc \
-            /opt/${REPO_NAME}/nginx/.htpasswd \
-            "${NGINX_BASIC_AUTH_USER}" \
-            "${NGINX_BASIC_AUTH_PASSWORD}"
-
-
+              /opt/${REPO_NAME}/nginx/.htpasswd \
+              \"${NGINX_BASIC_AUTH_USER}\" \
+              \"${NGINX_BASIC_AUTH_PASSWORD}\"
 
             {
-            echo '[vpn]'
-            echo 'localhost'
-            echo ''
-            echo '[vpn:vars]'
-            echo 'ansible_connection=local'
-            echo "repo_name=${REPO_NAME}"
+              echo '[vpn]'
+              echo 'localhost'
+              echo ''
+              echo '[vpn:vars]'
+              echo 'ansible_connection=local'
+              echo \"repo_name=${REPO_NAME}\"
             } > /opt/${REPO_NAME}/ansible/inventory.ini
 
             cd /opt/${REPO_NAME}/ansible
-
-            ansible-playbook \
-            -i inventory.ini \
-            bootstrap.yml
-
-
+            ansible-playbook -i inventory.ini bootstrap.yml
 
             touch /opt/${REPO_NAME}/.bootstrap-completed
-
             sudo touch /opt/.github-bootstrap-completed
-
             echo 'Bootstrap completed successfully.'
-            "
-
-            sudo chown -R ${SSH_USER}:${SSH_USER} /opt/${REPO_NAME}
-
-            {
-            echo "WG_DOMAIN=${WG_DOMAIN}"
-            echo "KUMA_DOMAIN=${KUMA_DOMAIN}"
-
-            echo "DOCKER_SUBNET=${DOCKER_SUBNET}"
-            echo "DOCKER_NETWORK_BASE=${DOCKER_NETWORK_BASE}"
-
-            echo "WG_EASY_IP=${DOCKER_NETWORK_BASE}.2"
-            echo "KUMA_IP=${DOCKER_NETWORK_BASE}.3"
-            echo "NGINX_IP=${DOCKER_NETWORK_BASE}.4"
-            echo "LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}"
-
-            echo "DEPLOYMENT_MODE=${DEPLOYMENT_MODE}"
-            echo "REPO_NAME=${REPO_NAME}"
-
-            } > /opt/${REPO_NAME}/.bootstrap.env
-
-            export WG_DOMAIN="${WG_DOMAIN}"
-            export DOCKER_SUBNET="${DOCKER_SUBNET}"
-            export WG_ADMIN_USER="${WG_ADMIN_USER}"
-            export WG_ADMIN_PASSWORD="${WG_ADMIN_PASSWORD}"
-            export REPO_NAME="${REPO_NAME}"
-            export KUMA_DOMAIN="${KUMA_DOMAIN}"
-            export WG_EASY_IP="${DOCKER_NETWORK_BASE}.2"
-            export KUMA_IP="${DOCKER_NETWORK_BASE}.3"
-            export NGINX_IP="${DOCKER_NETWORK_BASE}.4"
-
-            cd /opt/${REPO_NAME}
-
-            mkdir -p /opt/${REPO_NAME}/nginx
-
-            envsubst < .env.template > .env
+          "
