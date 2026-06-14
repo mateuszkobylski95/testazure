@@ -5,8 +5,8 @@ on:
     inputs:
 
       wg_domain:
-        description: "WG-Easy domain"
-        required: true
+        description: "WG-Easy domain (leave empty to keep the Azure FQDN)"
+        required: false
 
       kuma_domain:
         description: "Uptime Kuma domain (optional)"
@@ -49,6 +49,7 @@ jobs:
         id: tf
         run: |
           echo "public_ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
+          echo "fqdn=$(terraform output -raw azure_fqdn)" >> $GITHUB_OUTPUT
 
       - name: Setup SSH key
         run: |
@@ -56,26 +57,53 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
-      - name: Validate domains
+      - name: Resolve WG domain
         run: |
-         WG="${{ github.event.inputs.wg_domain }}"
-         KUMA="${{ github.event.inputs.kuma_domain }}"
+          INPUT="${{ github.event.inputs.wg_domain }}"
 
-         if [ -n "$KUMA" ] && [ "$WG" = "$KUMA" ]; then
-         echo "WG and Kuma domains must be different"
-         exit 1
-         fi
+          if [ -z "$INPUT" ]; then
+            echo "WG_DOMAIN=${{ steps.tf.outputs.fqdn }}" >> $GITHUB_ENV
+            echo "WG_DOMAIN_CUSTOM=false" >> $GITHUB_ENV
+            echo "Keeping Azure FQDN: ${{ steps.tf.outputs.fqdn }}"
+          else
+            echo "WG_DOMAIN=$INPUT" >> $GITHUB_ENV
+            echo "WG_DOMAIN_CUSTOM=true" >> $GITHUB_ENV
+            echo "Using custom WG domain: $INPUT"
+          fi
+
+      - name: Calculate deployment mode
+        run: |
+          if [ -z "${{ github.event.inputs.kuma_domain }}" ]; then
+            echo "DEPLOYMENT_MODE=single" >> $GITHUB_ENV
+          else
+            echo "DEPLOYMENT_MODE=dual" >> $GITHUB_ENV
+          fi
+
+      - name: Validate domains
+        env:
+          WG_DOMAIN: ${{ env.WG_DOMAIN }}
+        run: |
+          WG="${WG_DOMAIN}"
+          KUMA="${{ github.event.inputs.kuma_domain }}"
+
+          if [ -n "$KUMA" ] && [ "$WG" = "$KUMA" ]; then
+            echo "WG and Kuma domains must be different"
+            exit 1
+          fi
 
       - name: Validate domain format
+        if: env.WG_DOMAIN_CUSTOM == 'true' || github.event.inputs.kuma_domain != ''
         run: |
           python3 - <<'EOF'
+          import os
           import re
 
-          domains = [
-              "${{ github.event.inputs.wg_domain }}"
-          ]
+          domains = []
 
-          kuma = "${{ github.event.inputs.kuma_domain }}"
+          if os.environ.get("WG_DOMAIN_CUSTOM") == "true":
+              domains.append(os.environ["WG_DOMAIN"])
+
+          kuma = "${{ github.event.inputs.kuma_domain }}".strip()
 
           if kuma:
               domains.append(kuma)
@@ -92,41 +120,46 @@ jobs:
 
           print("Domain validation OK")
           EOF
+        env:
+          WG_DOMAIN: ${{ env.WG_DOMAIN }}
+          WG_DOMAIN_CUSTOM: ${{ env.WG_DOMAIN_CUSTOM }}
 
       - name: Validate domain DNS
+        if: env.WG_DOMAIN_CUSTOM == 'true' || github.event.inputs.kuma_domain != ''
         env:
           VM_IP: ${{ steps.tf.outputs.public_ip }}
           SSH_USER: azureuser
-
-          WG_DOMAIN: ${{ github.event.inputs.wg_domain }}
+          SERVER_IP: ${{ steps.tf.outputs.public_ip }}
+          WG_DOMAIN: ${{ env.WG_DOMAIN }}
+          WG_DOMAIN_CUSTOM: ${{ env.WG_DOMAIN_CUSTOM }}
           KUMA_DOMAIN: ${{ github.event.inputs.kuma_domain }}
-
         run: |
           ssh -o StrictHostKeyChecking=no \
           ${SSH_USER}@${VM_IP} <<EOF
 
           set -e
 
-          SERVER_IP=\$(curl -4 -s ifconfig.me)
+          SERVER_IP="${SERVER_IP}"
 
-          WG_IP=\$(dig +short "${WG_DOMAIN}" | head -n1)
+          if [ "${WG_DOMAIN_CUSTOM}" = "true" ]; then
+            WG_IP=\$(dig +short "${WG_DOMAIN}" | grep -E '^[0-9.]+\$' | head -n1)
 
-          if [ -z "\$WG_IP" ]; then
-            echo "WG domain does not resolve"
-            exit 1
-          fi
+            if [ -z "\$WG_IP" ]; then
+              echo "WG domain does not resolve: ${WG_DOMAIN}"
+              exit 1
+            fi
 
-          if [ "\$WG_IP" != "\$SERVER_IP" ]; then
-            echo "WG domain resolves to \$WG_IP but server IP is \$SERVER_IP"
-            exit 1
+            if [ "\$WG_IP" != "\$SERVER_IP" ]; then
+              echo "WG domain resolves to \$WG_IP but server IP is \$SERVER_IP"
+              exit 1
+            fi
           fi
 
           if [ -n "${KUMA_DOMAIN}" ]; then
-
-            KUMA_IP=\$(dig +short "${KUMA_DOMAIN}" | head -n1)
+            KUMA_IP=\$(dig +short "${KUMA_DOMAIN}" | grep -E '^[0-9.]+\$' | head -n1)
 
             if [ -z "\$KUMA_IP" ]; then
-              echo "Kuma domain does not resolve"
+              echo "Kuma domain does not resolve: ${KUMA_DOMAIN}"
               exit 1
             fi
 
@@ -134,27 +167,18 @@ jobs:
               echo "Kuma domain resolves to \$KUMA_IP but server IP is \$SERVER_IP"
               exit 1
             fi
-
           fi
 
           echo "Domain DNS validation OK"
 
           EOF
 
-      - name: Calculate deployment mode
-        run: |
-          if [ -z "${{ github.event.inputs.kuma_domain }}" ]; then
-            echo "DEPLOYMENT_MODE=single" >> $GITHUB_ENV
-          else
-            echo "DEPLOYMENT_MODE=dual" >> $GITHUB_ENV
-          fi
-
       - name: Read current domains
         env:
             VM_IP: ${{ steps.tf.outputs.public_ip }}
             SSH_USER: azureuser
-
             REPO_NAME: ${{ github.event.repository.name }}
+            WG_DOMAIN: ${{ env.WG_DOMAIN }}
 
         run: |
 
@@ -175,14 +199,19 @@ jobs:
 
             echo "Old WG domain: ${OLD_WG_DOMAIN}"
             echo "Old Kuma domain: ${OLD_KUMA_DOMAIN}"
+            echo "New WG domain: ${WG_DOMAIN}"
 
       - name: Detect domain changes
+        env:
+          WG_DOMAIN: ${{ env.WG_DOMAIN }}
+          OLD_WG_DOMAIN: ${{ env.OLD_WG_DOMAIN }}
+          OLD_KUMA_DOMAIN: ${{ env.OLD_KUMA_DOMAIN }}
         run: |
 
             WG_CHANGED=false
             KUMA_CHANGED=false
 
-            if [ "$OLD_WG_DOMAIN" != "${{ github.event.inputs.wg_domain }}" ]; then
+            if [ "$OLD_WG_DOMAIN" != "${WG_DOMAIN}" ]; then
             WG_CHANGED=true
             fi
 
@@ -251,7 +280,7 @@ jobs:
           VM_IP: ${{ steps.tf.outputs.public_ip }}
           SSH_USER: azureuser
 
-          WG_DOMAIN: ${{ github.event.inputs.wg_domain }}
+          WG_DOMAIN: ${{ env.WG_DOMAIN }}
           KUMA_DOMAIN: ${{ github.event.inputs.kuma_domain }}
 
           DEPLOYMENT_MODE: ${{ env.DEPLOYMENT_MODE }}
