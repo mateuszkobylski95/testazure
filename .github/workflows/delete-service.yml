@@ -90,7 +90,7 @@ jobs:
 
           set -e
 
-          BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+          BOOTSTRAP_FILE=\$(for f in /opt/*/.bootstrap.env; do [ -f "\$f" ] && echo "\$f" && break; done)
 
           if [ -z "\$BOOTSTRAP_FILE" ]; then
             echo ".bootstrap.env not found"
@@ -165,7 +165,7 @@ jobs:
 
           set -e
 
-          BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+          BOOTSTRAP_FILE=\$(for f in /opt/*/.bootstrap.env; do [ -f "\$f" ] && echo "\$f" && break; done)
 
           REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
 
@@ -195,7 +195,7 @@ jobs:
 
           set -e
 
-          BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+          BOOTSTRAP_FILE=\$(for f in /opt/*/.bootstrap.env; do [ -f "\$f" ] && echo "\$f" && break; done)
 
           if [ -z "\$BOOTSTRAP_FILE" ]; then
             echo ".bootstrap.env not found"

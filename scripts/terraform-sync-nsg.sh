@@ -16,8 +16,18 @@ PUBLIC_PORTS="$(
 DEPLOYMENT_MODE="$(
   ssh -o StrictHostKeyChecking=no \
     "${SSH_USER}@${VM_IP}" \
-    "BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name '.bootstrap.env' | head -n 1); \
-     if [ -z \"\$BOOTSTRAP_FILE\" ]; then echo single; else grep '^DEPLOYMENT_MODE=' \"\$BOOTSTRAP_FILE\" | cut -d'=' -f2; fi"
+    'BOOTSTRAP_FILE=""
+     for candidate in /opt/*/.bootstrap.env; do
+       if [ -f "$candidate" ]; then
+         BOOTSTRAP_FILE="$candidate"
+         break
+       fi
+     done
+     if [ -z "$BOOTSTRAP_FILE" ]; then
+       echo single
+     else
+       grep "^DEPLOYMENT_MODE=" "$BOOTSTRAP_FILE" | cut -d"=" -f2
+     fi'
 )"
 
 if [ -n "${SINGLE_DOMAIN_MODE_OVERRIDE:-}" ]; then

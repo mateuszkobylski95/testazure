@@ -4,7 +4,14 @@ set -euo pipefail
 REPO_DIR="${1:-}"
 
 if [ -z "$REPO_DIR" ]; then
-  BOOTSTRAP_FILE="$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)"
+  BOOTSTRAP_FILE=""
+
+  for candidate in /opt/*/.bootstrap.env; do
+    if [ -f "$candidate" ]; then
+      BOOTSTRAP_FILE="$candidate"
+      break
+    fi
+  done
 
   if [ -z "$BOOTSTRAP_FILE" ]; then
     echo "[]"

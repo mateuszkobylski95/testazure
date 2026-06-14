@@ -254,7 +254,7 @@ jobs:
 
             set -e
 
-            BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+            BOOTSTRAP_FILE=\$(for f in /opt/*/.bootstrap.env; do [ -f "\$f" ] && echo "\$f" && break; done)
 
             if [ -z "\$BOOTSTRAP_FILE" ]; then
             echo ".bootstrap.env not found"
@@ -288,7 +288,7 @@ jobs:
 
             DOMAIN="${DOMAIN}"
 
-            BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+            BOOTSTRAP_FILE=\$(for f in /opt/*/.bootstrap.env; do [ -f "\$f" ] && echo "\$f" && break; done)
 
             if [ -z "\$BOOTSTRAP_FILE" ]; then
             echo ".bootstrap.env not found"
@@ -369,7 +369,7 @@ jobs:
 
             PUBLIC_PORT="${PUBLIC_PORT}"
 
-            BOOTSTRAP_FILE=\$(find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+            BOOTSTRAP_FILE=\$(for f in /opt/*/.bootstrap.env; do [ -f "\$f" ] && echo "\$f" && break; done)
 
             if [ -z "\$BOOTSTRAP_FILE" ]; then
             echo ".bootstrap.env not found"
@@ -417,7 +417,7 @@ jobs:
             LOCAL_PORT="${LOCAL_PORT}"
             PATH_VALUE="${PATH_VALUE}"
 
-            BOOTSTRAP_FILE=\$(sudo find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+            BOOTSTRAP_FILE=\$(for f in /opt/*/.bootstrap.env; do [ -f "\$f" ] && echo "\$f" && break; done)
 
             if [ -z "\$BOOTSTRAP_FILE" ]; then
             echo ".bootstrap.env not found"
@@ -484,7 +484,7 @@ jobs:
 
             BASIC_AUTH="${BASIC_AUTH}"
 
-            BOOTSTRAP_FILE=\$(sudo find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+            BOOTSTRAP_FILE=\$(for f in /opt/*/.bootstrap.env; do [ -f "\$f" ] && echo "\$f" && break; done)
 
             if [ -z "\$BOOTSTRAP_FILE" ]; then
             echo ".bootstrap.env not found"
@@ -541,7 +541,7 @@ jobs:
 
             set -e
 
-            BOOTSTRAP_FILE=\$(sudo find /opt -maxdepth 2 -name ".bootstrap.env" | head -n 1)
+            BOOTSTRAP_FILE=\$(for f in /opt/*/.bootstrap.env; do [ -f "\$f" ] && echo "\$f" && break; done)
 
             if [ -z "\$BOOTSTRAP_FILE" ]; then
             echo ".bootstrap.env not found"
