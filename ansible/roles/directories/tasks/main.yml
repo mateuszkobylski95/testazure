@@ -12,3 +12,11 @@
     - nginx
     - services
 
+- name: Ensure services directory is writable by azureuser
+  file:
+    path: "/opt/{{ bootstrap_config.REPO_NAME }}/services"
+    state: directory
+    mode: '0755'
+    owner: azureuser
+    group: azureuser
+    recurse: true

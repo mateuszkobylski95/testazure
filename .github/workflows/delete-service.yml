@@ -169,6 +169,8 @@ jobs:
 
           REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
 
+          sudo chown -R azureuser:azureuser "\$REPO_DIR/services"
+
           rm "\$REPO_DIR/services/${SERVICE_NAME}.yml"
 
           echo "Service deleted"

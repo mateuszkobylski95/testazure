@@ -427,6 +427,9 @@ jobs:
 
           set -e
 
+          sudo mkdir -p /opt/${REPO_NAME}/services
+          sudo chown -R azureuser:azureuser /opt/${REPO_NAME}/services
+
           cat > /opt/${REPO_NAME}/services/${SERVICE_NAME}.yml <<SERVICE
 
           name: ${SERVICE_NAME}

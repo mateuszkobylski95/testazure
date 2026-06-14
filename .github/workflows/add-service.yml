@@ -493,7 +493,8 @@ jobs:
 
             REPO_DIR=\$(dirname "\$BOOTSTRAP_FILE")
 
-            mkdir -p "\$REPO_DIR/services"
+            sudo mkdir -p "\$REPO_DIR/services"
+            sudo chown -R azureuser:azureuser "\$REPO_DIR/services"
 
             cat > "\$REPO_DIR/services/\${SERVICE_NAME}.yml" <<SERVICE
 
